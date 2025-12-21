@@ -32,6 +32,8 @@ class FluidType(Enum):
     RESOMAL = "resomal_rehydration_sol"     # For SAM
     PRBC = "packed_red_blood_cells"         # For Severe Anemia
     HALF_STRENGTH = "0.45_normal_saline"    # Maintenance
+    COLLOID_ALBUMIN = "albumin_5_percent" # REQUIRED: For Refractory Dengue/Sepsis
+    ORS_SOLUTION = "oral_rehydration_solution" # REQUIRED: For bridging IV to Oral
 
 # --- 2. INPUT LAYER (What the Doctor Enters) ---
 
@@ -74,6 +76,23 @@ class PatientInput:
     
     # REQUIRED FOR RENAL: Context for "Is the kidney working or shut down?"
     time_since_last_urine_hours: float = 0.0
+
+    # RESPIRATORY BASELINE
+    # Required to trigger "Stop if RR increases by X"
+    respiratory_rate_bpm: int
+
+    # LOSS ESTIMATION (The "Third Vector")
+    # "How many times has the child vomited/stooled in last 4 hours?"
+    # The engine uses this to estimate a ml/hr "Drain Rate"
+    ongoing_losses_severity: str # 'NONE', 'MILD', 'SEVERE' (Engine maps this to ml/kg/hr)
+    
+    # BASELINE ORGAN STATUS
+    # Changes the sensitivity of the Safety Alerts
+    baseline_hepatomegaly: bool = False # "Is liver already palpable?"
+    
+    # HEIGHT
+    # Useful for accurate BSA (Insensible Loss) and Z-Score
+    height_cm: Optional[float] = None
 
 # --- 3. INTERNAL PHYSICS CONSTANTS (The "Twin" Configuration) ---
 
@@ -127,6 +146,11 @@ class PhysiologicalParams:
     target_map_mmhg: float
     target_heart_rate_upper_limit: int
 
+    # INSENSIBLE LOSS RATE
+    # Skin/Lung evaporation. High in Fever/SAM.
+    # Formula: (BSA * TempFactor) / 24h
+    insensible_loss_ml_min: float 
+
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
 @dataclass
@@ -164,6 +188,11 @@ class SimulationState:
 
     # Track real-time weight changes due to fluid accumulation
     current_weight_dynamic_kg: float
+
+    # NON-RENAL OUTPUTS
+    # These subtract from the total volume available for BP
+    q_ongoing_loss_ml_min: float  # Diarrhea/Vomiting rate
+    q_insensible_loss_ml_min: float # Sweat/Respiration rate
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
