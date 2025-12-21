@@ -119,6 +119,14 @@ class PhysiologicalParams:
     # The natural "overflow drain" from tissues back to veins
     lymphatic_drainage_capacity_ml_min: float
 
+    # ADDITION: For SAM, this is >1.0. For normal, 1.0.
+    # Shifts the equilibrium point of water movement into cells.
+    intracellular_sodium_bias: float 
+
+    # ADDITION: Calculated safe targets (e.g., MAP > 55 for infant)
+    target_map_mmhg: float
+    target_heart_rate_upper_limit: int
+
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
 @dataclass
@@ -153,6 +161,9 @@ class SimulationState:
     
     # DERIVED CLINICAL METRIC
     current_hematocrit_dynamic: float   # To track Hemoconcentration in real-time
+
+    # Track real-time weight changes due to fluid accumulation
+    current_weight_dynamic_kg: float
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
@@ -189,7 +200,9 @@ class EngineOutput:
     
     # 3. The Prediction (What will happen?)
     predicted_bp_rise: int    # "Expect SBP to rise by 10 mmHg"
-    safety_stop_limit: int    # "Stop if HR > 180"
+    stop_trigger_heart_rate: int       # e.g. "Stop if HR > 180" (Fluid Overload)
+    stop_trigger_respiratory_rate: int # e.g. "Stop if RR > 60" (Pulmonary Edema)
+    stop_trigger_liver_span_increase: bool # True for "Check Hepatomegaly"
 
     # HARD SAFETY LIMITS
     max_safe_infusion_rate_ml_hr: int  # e.g., "Do not exceed 40ml/hr"
