@@ -242,3 +242,248 @@ class EngineOutput:
     requires_blood: bool = False       # True if Anemia/Hb thresholds met
     
     alerts: SafetyAlerts
+
+
+import math
+
+class PediaFlowPhysicsEngine:
+    """
+    The Mathematical Core.
+    Translates Clinical Inputs -> Physiological Parameters -> Initial State.
+    """
+
+    @staticmethod
+    def _calculate_bsa(weight_kg: float, height_cm: Optional[float]) -> float:
+        """
+        Calculates Body Surface Area (m²) using Mosteller formula.
+        Falls back to weight-based approximation if height is missing.
+        """
+        if height_cm:
+            return math.sqrt((weight_kg * height_cm) / 3600)
+        else:
+            # Weight-based approximation for children
+            # Formula: (4W + 7) / (W + 90)
+            return (4 * weight_kg + 7) / (weight_kg + 90)
+
+    @staticmethod
+    def _calculate_compartment_volumes(input: PatientInput) -> dict:
+        """
+        Determines the size of the 'Tanks' (Blood, Tissue, Cells).
+        Logic: Adapts to Age and Malnutrition (SAM).
+        """
+        # 1. Base Ratios (Age-based)
+        if input.age_months < 1:  # Neonate
+            tbw_ratio = 0.80
+            ecf_ratio = 0.45
+        elif input.age_months < 12:  # Infant
+            tbw_ratio = 0.70
+            ecf_ratio = 0.30
+        else:  # Child
+            tbw_ratio = 0.60
+            ecf_ratio = 0.25
+
+        # 2. SAM Adjustment (Critical)
+        # Malnourished children are 'wetter' (less fat/muscle, more water per kg)
+        is_sam = input.muac_cm < 11.5
+        if is_sam:
+            tbw_ratio += 0.05  # +5% Total Water
+            ecf_ratio += 0.05  # +5% Extracellular Fluid
+
+        # 3. Calculate Volumes (Liters)
+        total_water = input.weight_kg * tbw_ratio
+        ecf_total = input.weight_kg * ecf_ratio
+        
+        # Partition ECF into Intravascular (Blood) and Interstitial
+        # Neonates/SAM have higher plasma volume relative to weight
+        plasma_fraction = 0.25 # Standard approximation (1/4 of ECF)
+        
+        v_blood = ecf_total * plasma_fraction
+        v_interstitial = ecf_total * (1 - plasma_fraction)
+        
+        return {
+            "tbw_fraction": tbw_ratio,
+            "v_blood": v_blood,
+            "v_interstitial": v_interstitial
+        }
+
+    @staticmethod
+    def _calculate_hemodynamics(input: PatientInput) -> dict:
+        """
+        Calculates Heart Strength (Contractility) and Vessel Resistance (SVR).
+        """
+        # 1. Contractility (The Pump Strength)
+        # Baseline = 1.0. SAM/Sepsis reduces it.
+        contractility = 1.0
+        
+        if input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION or input.muac_cm < 11.5:
+            contractility *= 0.5  # The "Flabby Heart" penalty
+        
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+            contractility *= 0.7  # Septic myocardial depression
+
+        # 2. Systemic Vascular Resistance (SVR)
+        # SVR = Base * Viscosity * TempFactor
+        
+        # A. Viscosity (Driven by Anemia)
+        # Normal Hb ~12. Viscosity drops linearly with anemia.
+        # Simplified Physics: Relative Viscosity approx 1.0 at Hb 12.
+        viscosity = 0.3 + (0.058 * input.hemoglobin_g_dl) 
+        
+        # B. Temperature (Vasoconstriction)
+        temp_factor = 1.0
+        if input.temp_celsius < 36.0:
+            temp_factor = 1.5  # Clamped vessels (Cold)
+        elif input.temp_celsius > 38.5:
+            temp_factor = 0.8  # Dilated vessels (Fever)
+
+        # Base SVR approximation (inverse of size)
+        base_svr = 80 * (1 / (input.weight_kg ** 0.5))
+        
+        svr = base_svr * viscosity * temp_factor
+
+        return {
+            "contractility": contractility,
+            "svr": svr,
+            "viscosity": viscosity
+        }
+
+    @staticmethod
+    def _calculate_renal_function(age_months: int) -> float:
+        """
+        Calculates Renal Maturity Factor (0.0 to 1.0).
+        """
+        if age_months >= 24:
+            return 1.0
+        
+        # Linear maturation from 0.3 (birth) to 1.0 (2 years)
+        # Slope = 0.7 / 24 = ~0.029 per month
+        maturity = 0.3 + (0.029 * age_months)
+        return min(maturity, 1.0)
+
+    @staticmethod
+    def _calculate_insensible_loss(input: PatientInput, bsa: float) -> float:
+        """
+        Calculates evaporation from skin/lungs (ml/min).
+        """
+        # Baseline: ~400 ml/m2/day
+        daily_loss_ml = 400 * bsa
+        
+        # Fever Correction: +12% per degree > 38
+        if input.temp_celsius > 38.0:
+            excess_temp = input.temp_celsius - 38.0
+            daily_loss_ml *= (1 + (0.12 * excess_temp))
+            
+        # Tachypnea Correction: +10% if RR > 50 (Work of breathing)
+        if input.respiratory_rate_bpm > 50:
+            daily_loss_ml *= 1.10
+            
+        return daily_loss_ml / 1440.0  # Convert per day -> per minute
+
+    @staticmethod
+    def initialize_physics_engine(input: PatientInput) -> PhysiologicalParams:
+        """
+        MASTER BUILDER: Creates the unique 'PhysiologicalParams' for this child.
+        """
+        bsa = PediaFlowPhysicsEngine._calculate_bsa(input.weight_kg, input.height_cm)
+        vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
+        hemo = PediaFlowPhysicsEngine._calculate_hemodynamics(input)
+        renal_factor = PediaFlowPhysicsEngine._calculate_renal_function(input.age_months)
+        
+        # Dengue Logic: Dynamic K_f
+        k_f_base = 0.01
+        if input.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
+            # Initial K_f is higher due to inflammatory markers
+            k_f_base = 0.02 
+
+        # SAM Logic: Tissue Compliance
+        is_sam = input.muac_cm < 11.5
+        tissue_compliance = 0.5 if is_sam else 1.0 # Floppy tissue if SAM
+        sodium_bias = 1.2 if is_sam else 1.0 # Cells hold sodium if SAM
+
+        # Target Generation
+        target_map = 55.0 if input.age_months < 12 else 65.0
+        max_hr = 160 if input.age_months > 12 else 180
+
+        return PhysiologicalParams(
+            tbw_fraction=vols["tbw_fraction"],
+            v_blood_normal_l=vols["v_blood"],
+            v_inter_normal_l=vols["v_interstitial"],
+            
+            cardiac_contractility=hemo["contractility"],
+            heart_stiffness_k=4.0, # Pediatric constant
+            
+            svr_resistance=hemo["svr"],
+            capillary_filtration_k=k_f_base,
+            blood_viscosity_eta=hemo["viscosity"],
+            
+            tissue_compliance_factor=tissue_compliance,
+            renal_maturity_factor=renal_factor,
+            
+            max_cardiac_output_l_min=(input.weight_kg * 0.15), # approx 150ml/kg/min max
+            venous_compliance_ml_mmhg=input.weight_kg * 1.5,
+            osmotic_conductance_k=0.1,
+            lymphatic_drainage_capacity_ml_min=input.weight_kg * 0.002, # 2ml/kg/hr max lymph
+            
+            intracellular_sodium_bias=sodium_bias,
+            target_map_mmhg=target_map,
+            target_heart_rate_upper_limit=max_hr,
+            
+            insensible_loss_ml_min=PediaFlowPhysicsEngine._calculate_insensible_loss(input, bsa)
+        )
+
+    @staticmethod
+    def initialize_simulation_state(input: PatientInput, params: PhysiologicalParams) -> SimulationState:
+        """
+        Creates the 'T=0' State based on current Clinical Presentation.
+        """
+        # 1. Estimate Current Volumes based on Dehydration Severity
+        deficit_factor = 0.0
+        if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+            deficit_factor = 0.10 # 10% weight loss
+        elif input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
+            deficit_factor = 0.08 # Conservative estimate for SAM
+        
+        # Partition the deficit (mostly from ECF)
+        vol_loss_liters = input.weight_kg * deficit_factor
+        
+        # 75% loss from Interstitial, 25% from Blood
+        current_v_inter = params.v_inter_normal_l - (vol_loss_liters * 0.75)
+        current_v_blood = params.v_blood_normal_l - (vol_loss_liters * 0.25)
+        
+        # 2. Ongoing Loss Estimation (The Third Vector)
+        ongoing_loss_rate = 0.0
+        if input.ongoing_losses_severity == "MILD":
+            ongoing_loss_rate = (input.weight_kg * 5) / 60.0 # 5ml/kg/hr
+        elif input.ongoing_losses_severity == "SEVERE":
+            ongoing_loss_rate = (input.weight_kg * 10) / 60.0 # 10ml/kg/hr
+
+        return SimulationState(
+            time_minutes=0.0,
+            
+            v_blood_current_l=max(current_v_blood, 0.1), # Prevent zero/neg
+            v_interstitial_current_l=max(current_v_inter, 0.1),
+            v_intracellular_current_l=input.weight_kg * 0.4, # Approx 40% weight
+            
+            # Pressures (Estimated from Vitals for T=0)
+            map_mmHg=float(input.systolic_bp) * 0.65, # Approx MAP
+            cvp_mmHg=2.0 if deficit_factor > 0 else 5.0,
+            pcwp_mmHg=4.0,
+            p_interstitial_mmHg=-2.0 if deficit_factor > 0 else 0.0,
+            
+            # Fluxes (Start at 0)
+            q_infusion_ml_min=0.0,
+            q_leak_ml_min=0.0,
+            q_urine_ml_min=0.0,
+            q_lymph_ml_min=0.0,
+            q_osmotic_shift_ml_min=0.0,
+            
+            # Safety Integrators
+            total_volume_infused_ml=0.0,
+            total_sodium_load_meq=0.0,
+            
+            current_hematocrit_dynamic=input.hematocrit_pct,
+            current_weight_dynamic_kg=input.weight_kg,
+            
+            q_ongoing_loss_ml_min=ongoing_loss_rate,
+            q_insensible_loss_ml_min=params.insensible_loss_ml_min
+        )
