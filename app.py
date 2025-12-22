@@ -1,3 +1,17 @@
+# --- METADATA & COMPLIANCE ---
+__version__ = "1.0.0"
+__model_date__ = "2025-12-22"
+__validation_status__ = "Clinical validation pending"
+__iap_guideline_version = "IAP 2023 Shock Guidelines"
+__who_fluid_version = "WHO 2022 Pocketbook"
+
+MEDICAL_DISCLAIMER = """
+⚠️ DECISION SUPPORT TOOL - NOT A PRESCRIPTION
+• Final responsibility: Treating physician
+• Not a substitute for clinical judgment
+• Offline calculator - no real-time monitoring
+"""
+
 """
 PediaFlow: Phase 1 Data Dictionary & Variable Definitions
 =========================================================
@@ -12,11 +26,35 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
+class CriticalConditionError(ValueError):
+    """Raised when vitals indicate immediate life threat requiring ICU, not calculation."""
+    pass
+
+class DataTypeError(TypeError):
+    """Raised when inputs are wrong python types (str instead of float)."""
+    pass
+
 # --- 1. ENUMS (Standardizing the Inputs) ---
 
 class IVSetType(Enum):
-    MICRO_DRIP = "micro_60_gtt_ml"  # Standard Pediatric Set
-    MACRO_DRIP = "macro_20_gtt_ml"  # Standard Adult Set
+    """Values represent drops per mL (gtt/mL)"""
+    MICRO_DRIP = 60  
+    MACRO_DRIP = 20  
+    
+class AGE_CONSTANTS:
+    # Age (months): (Min RR, Max RR)
+    RR_LIMITS = {0: (30,100), 12: (20,80), 60: (15,60), 216: (10,50)}
+
+class PHYSICS_CONSTANTS:
+    MINUTES_PER_DAY = 1440.0
+    NEONATE_RENAL_MATURITY_BASE = 0.3
+    RENAL_MATURATION_RATE_PER_MONTH = 0.029 # (1.0 - 0.3) / 24 months
+    
+    # Compartment Ratios
+    NEONATE_TBW = 0.80
+    INFANT_TBW = 0.70
+    CHILD_TBW = 0.60
+    SAM_HYDRATION_OFFSET = 0.05 # +5% water for SAM
 
 class ClinicalDiagnosis(Enum):
     SEVERE_DEHYDRATION = "severe_dehydration" # Diarrhea/Vomiting
@@ -40,6 +78,41 @@ class FluidType(Enum):
     COLLOID_ALBUMIN = "albumin_5_percent" # REQUIRED: For Refractory Dengue/Sepsis
     ORS_SOLUTION = "oral_rehydration_solution" # REQUIRED: For bridging IV to Oral
 
+class OngoingLosses(Enum):
+    NONE = 0
+    MILD = 5      # 5 ml/kg/hr
+    MODERATE = 7  # 7 ml/kg/hr (Added per feedback)
+    SEVERE = 10   # 10 ml/kg/hr
+
+@dataclass
+class CalculationWarnings:
+    """Tracks non-critical issues that the doctor must know."""
+    hct_autocorrected: Optional[tuple] = None  # (original, corrected)
+    albumin_estimated: bool = False
+    missing_optimal_inputs: List[str] = field(default_factory=list)
+    sam_shock_conflict: bool = False
+
+from datetime import datetime
+
+@dataclass
+class AuditLog:
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    action: str = "twin_creation"
+    inputs_hash: int = 0
+    model_version: str = __version__
+
+@dataclass
+class ValidationResult:
+    """Standardized response format for API/UI."""
+    success: bool
+    patient: Optional['PatientInput']
+    physics_params: Optional['PhysiologicalParams']
+    initial_state: Optional['SimulationState']
+    errors: List[str]
+    warnings: CalculationWarnings
+    confidence_score: float = 1.0
+    audit_log: Optional[AuditLog] = None
+
 # --- 2. INPUT LAYER (What the Doctor Enters) ---
 
 @dataclass
@@ -60,9 +133,13 @@ class PatientInput:
     
     # Clinical Vitals (Snapshot at T=0)
     systolic_bp: int         # mmHg
+    diastolic_bp: Optional[int] = None # [NEW] Optional for better MAP
     heart_rate: int          # bpm
     capillary_refill_sec: int # >3s = Shock
     sp_o2_percent: int       # Oxygen Saturation
+    # RESPIRATORY BASELINE
+    # Required to trigger "Stop if RR increases by X"
+    respiratory_rate_bpm: int
     
     # Lab / Dynamic Inputs (Optional but high value)
     current_sodium: float = 140.0 # mEq/L (Critical for Cerebral Edema logic)
@@ -73,8 +150,14 @@ class PatientInput:
     diagnosis: ClinicalDiagnosis = ClinicalDiagnosis.UNKNOWN
     iv_set_available: IVSetType = IVSetType.MICRO_DRIP
 
+    # Illness Timeline (Critical for Dengue Sigma)
+    illness_day: Optional[int] = None 
+
     # REQUIRED FOR DENGUE: To detect "Rising Hct" (Leak Indicator)
     baseline_hematocrit_pct: Optional[float] = None 
+    plasma_albumin_g_dl: Optional[float] = None 
+    platelet_count: Optional[int] = None
+    lactate_mmol_l: Optional[float] = None
     
     # REQUIRED FOR TRANSFUSION: To calculate Volume = Weight * (Target - Current) * 4
     target_hemoglobin_g_dl: Optional[float] = 10.0 
@@ -82,14 +165,10 @@ class PatientInput:
     # REQUIRED FOR RENAL: Context for "Is the kidney working or shut down?"
     time_since_last_urine_hours: float = 0.0
 
-    # RESPIRATORY BASELINE
-    # Required to trigger "Stop if RR increases by X"
-    respiratory_rate_bpm: int
-
     # LOSS ESTIMATION (The "Third Vector")
     # "How many times has the child vomited/stooled in last 4 hours?"
     # The engine uses this to estimate a ml/hr "Drain Rate"
-    ongoing_losses_severity: str # 'NONE', 'MILD', 'SEVERE' (Engine maps this to ml/kg/hr)
+    ongoing_losses_severity: OngoingLosses = OngoingLosses.NONE
     
     # BASELINE ORGAN STATUS
     # Changes the sensitivity of the Safety Alerts
@@ -99,10 +178,95 @@ class PatientInput:
     # Useful for accurate BSA (Insensible Loss) and Z-Score
     height_cm: Optional[float] = None
 
-    # Critical for Leak Phase & Oncotic Pressure calculation
-    plasma_albumin_g_dl: Optional[float] = None 
-    platelet_count: Optional[int] = None
-    lactate_mmol_l: Optional[float] = None
+    def __post_init__(self):
+        """
+        Validates inputs against Age-Specific Norms and Type Safety.
+        """
+
+        # [NEW] 1. Type Safety (prevent string math crashes)
+        numeric_fields = [
+            'age_months', 'weight_kg', 'muac_cm', 'temp_celsius', 
+            'hemoglobin_g_dl', 'systolic_bp', 'heart_rate', 
+            'sp_o2_percent', 'respiratory_rate_bpm'
+        ]
+        for field in numeric_fields:
+            val = getattr(self, field)
+            if not isinstance(val, (int, float)):
+                raise DataTypeError(f"Field '{field}' must be numeric, got {type(val)}")
+
+        # [NEW] 2. Clinical Hard Stops (Safety First)
+        if self.systolic_bp < 40:
+            raise CriticalConditionError("BP <40 mmHg: Immediate ICU escalation required. Calculator locked.")
+        if self.sp_o2_percent < 80:
+            raise CriticalConditionError("SpO2 <80%: Priority is Oxygenation, not Fluid Calculation.")
+        if self.hemoglobin_g_dl < 4.0:
+            raise CriticalConditionError("Hb <4.0 g/dL: Immediate Transfusion required before Crystalloids.")
+
+        # [NEW] Validate Sex
+        if self.sex not in ['M', 'F']:
+             raise ValueError("Sex must be 'M' or 'F'")
+
+        # [NEW] Validate Diastolic if present
+        if self.diastolic_bp is not None:
+            if not (20 <= self.diastolic_bp <= 150):
+                raise ValueError(f"Invalid Diastolic BP: {self.diastolic_bp}")
+            if self.diastolic_bp >= self.systolic_bp:
+                raise ValueError("Diastolic BP must be less than Systolic BP")
+
+        # 1. Age-Specific Respiratory Rate Validation (WHO Guidelines)
+        # We don't crash the app if it's high (patient might be sick!),
+        # but we sanity check for impossible values based on age.
+        if self.illness_day is not None and not isinstance(self.illness_day, int):
+            raise DataTypeError(f"illness_day must be integer, got {type(self.illness_day)}")
+            
+        # Define physiologic limits (Lower Limit, Upper Limit)
+        if self.age_months < 2:
+            rr_min, rr_max = 30, 100 # Neonates breathe fast
+        elif self.age_months < 12:
+            rr_min, rr_max = 20, 80
+        elif self.age_months < 60:
+            rr_min, rr_max = 15, 60
+        else:
+            rr_min, rr_max = 10, 50 # Older children
+            
+        if not (rr_min <= self.respiratory_rate_bpm <= rr_max * 1.5):
+            pass # This is now a "Soft Warning" logic in the Engine, not a crash here.
+            
+        # Hard Stop only for physiological impossibility (e.g., RR > 200)
+        if self.respiratory_rate_bpm < 0 or self.respiratory_rate_bpm > 200:
+             raise ValueError(f"RR {self.respiratory_rate_bpm} is physically impossible")
+
+        # 2. Illness Day Validation
+        # If Dengue is suspected, Illness Day is MANDATORY logic
+        if self.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
+            if self.illness_day is None:
+                raise ValueError("Illness Day is mandatory for Dengue diagnosis")
+            if not (1 <= self.illness_day <= 14):
+                raise ValueError(f"Invalid Illness Day: {self.illness_day}")
+
+        # 3. Standard Range Checks
+        if not (0 <= self.age_months <= 216): raise ValueError(f"Invalid age: {self.age_months}")
+        if not (0.5 <= self.weight_kg <= 100.0): raise ValueError(f"Invalid weight: {self.weight_kg}")
+        if not (5.0 <= self.muac_cm <= 35.0): raise ValueError(f"Invalid MUAC: {self.muac_cm}")
+        if not (25.0 <= self.temp_celsius <= 42.0): raise ValueError(f"Invalid Temp: {self.temp_celsius}")
+        if not (1.0 <= self.hemoglobin_g_dl <= 25.0): raise ValueError(f"Invalid Hb: {self.hemoglobin_g_dl}")
+        if not (30 <= self.systolic_bp <= 240): raise ValueError(f"Invalid BP: {self.systolic_bp}")
+        if not (30 <= self.heart_rate <= 300): raise ValueError(f"Invalid HR: {self.heart_rate}")
+        if not (10 <= self.respiratory_rate_bpm <= 120): raise ValueError(f"Invalid RR: {self.respiratory_rate_bpm}")
+
+        # 4. Consistency Checks
+        # BMI Validation
+        if self.height_cm:
+            bmi = self.weight_kg / ((self.height_cm / 100) ** 2)
+            if not (10.0 <= bmi <= 35.0):
+                raise ValueError(f"Impossible BMI: {bmi:.1f}. Check Height/Weight.")
+
+        # 5. Protocol Conflicts (SAM + Shock)
+        is_shock = self.diagnosis in [ClinicalDiagnosis.DENGUE_SHOCK, ClinicalDiagnosis.SEPTIC_SHOCK]
+        is_sam = self.muac_cm < 11.5
+        if is_sam and is_shock:
+            # Valid scenario, but requires logic override in Engine
+            pass # Engine handles this via Contractility penalty
 
 # --- 3. INTERNAL PHYSICS CONSTANTS (The "Twin" Configuration) ---
 
@@ -155,6 +319,7 @@ class PhysiologicalParams:
     # ADDITION: Calculated safe targets (e.g., MAP > 55 for infant)
     target_map_mmhg: float
     target_heart_rate_upper_limit: int
+    target_respiratory_rate_limit: int
 
     # INSENSIBLE LOSS RATE
     # Skin/Lung evaporation. High in Fever/SAM.
@@ -169,6 +334,10 @@ class PhysiologicalParams:
     # GLUCOSE DYNAMICS
     # Metabolic burn rate to predict hypoglycemia
     glucose_utilization_mg_kg_min: float 
+
+    # CONFIDENCE INTERVALS
+    # Used to widen safety margins in output
+    albumin_uncertainty_g_dl: float = 0.5 
 
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
@@ -231,6 +400,8 @@ class SafetyAlerts:
     risk_volume_overload: bool = False  # If Total Vol > Safe Limit
     risk_cerebral_edema: bool = False   # If Sodium shifts > 10mEq/24h
     risk_hypoglycemia: bool = False     # If Glucose < 54 & using NS
+    hydrocortisone_needed: bool = False  # lactate>6 post-40ml/kg
+    risk_ketoacidosis: bool = False      # D5NS + lactate>6
     
     # Specific Context Warnings
     sam_heart_warning: bool = False     # "Weak Heart Detected - Rate Limiting Active"
@@ -269,6 +440,9 @@ class EngineOutput:
     
     alerts: SafetyAlerts
 
+    # [NEW] Summary for Quick Read
+    human_readable_summary: str = "" 
+    # e.g. "Give 100ml RL over 1 hr. Stop if RR > 55."
 
 import math
 
@@ -284,11 +458,11 @@ class PediaFlowPhysicsEngine:
         Calculates Body Surface Area (m²) using Mosteller formula.
         Falls back to weight-based approximation if height is missing.
         """
-        if height_cm:
+        if weight_kg <= 0: return 0.1
+        if height_cm is not None and isinstance(height_cm, (int, float)) and height_cm > 0:
             return math.sqrt((weight_kg * height_cm) / 3600)
         else:
-            # Weight-based approximation for children
-            # Formula: (4W + 7) / (W + 90)
+            # Weight-based approximation
             return (4 * weight_kg + 7) / (weight_kg + 90)
 
     @staticmethod
@@ -298,25 +472,22 @@ class PediaFlowPhysicsEngine:
         Logic: Adapts to Age and Malnutrition (SAM).
         """
         # 1. Base Ratios (Age-based)
-        if input.age_months < 1:  # Neonate
-            tbw_ratio = 0.80
+        if input.age_months < 1:
+            tbw_ratio = PHYSICS_CONSTANTS.NEONATE_TBW
             ecf_ratio = 0.45
-        elif input.age_months < 12:  # Infant
-            tbw_ratio = 0.70
+        elif input.age_months < 12:
+            tbw_ratio = PHYSICS_CONSTANTS.INFANT_TBW
             ecf_ratio = 0.30
-        else:  # Child
-            tbw_ratio = 0.60
+        else:
+            tbw_ratio = PHYSICS_CONSTANTS.CHILD_TBW
             ecf_ratio = 0.25
 
-        # 2. SAM Adjustment (Critical)
-        # Malnourished children are 'wetter' (less fat/muscle, more water per kg)
-        is_sam = input.muac_cm < 11.5
-        if is_sam:
-            tbw_ratio += 0.05  # +5% Total Water
-            ecf_ratio += 0.05  # +5% Extracellular Fluid
+        if input.muac_cm < 11.5:
+            tbw_ratio += PHYSICS_CONSTANTS.SAM_HYDRATION_OFFSET
+            ecf_ratio += PHYSICS_CONSTANTS.SAM_HYDRATION_OFFSET
 
         # Calculate Derived ICF Ratio (Conservation of Mass)
-        icf_ratio = tbw_ratio - ecf_ratio
+        icf_ratio = max(tbw_ratio - ecf_ratio, 0.3) 
 
         # Calculate Actual Volume
         v_intracellular = input.weight_kg * icf_ratio
@@ -357,15 +528,19 @@ class PediaFlowPhysicsEngine:
 
         # 2. Viscosity 
         # Using Poiseuille's approximation: (Hct/45)^2.5
-        # If Hct is missing, assume 35% (normal child) or 25% (anemic if Hb low)
-        if input.hematocrit_pct:
-            hct = input.hematocrit_pct
-        elif input.hemoglobin_g_dl:
-            hct = input.hemoglobin_g_dl * 3.0 # Rough est
+        # Prevents explosion at low Hct
+        hct = input.hematocrit_pct
+        if hct < 20.0:
+            # Linear approx for severe anemia
+            viscosity = 0.5 + (0.02 * hct)
         else:
-            hct = 35.0
-            
-        viscosity = (hct / 45.0) ** 2.5
+            # Poiseuille approx
+            viscosity = (hct / 45.0) ** 2.5
+        
+        # Clamp values to prevent mathematical explosion or division by zero
+        # Floor: 0.7 (Water-like)
+        # Ceiling: 3.0 (Severe Polycythemia sludge - prevents SVR overflow)
+        viscosity = max(0.7, min(viscosity, 3.0))
         
         # 3. SVR - Dimensional Correctness
         # Using Age-Based Norms (dynes-sec-cm-5)
@@ -376,10 +551,10 @@ class PediaFlowPhysicsEngine:
         else:
             base_svr = 1000.0
             
-        # Adjusting for Size (Inverse relationship to surface area approx)
-        # Larger child = Lower resistance vessels
-        size_correction = 10 / input.weight_kg # Normalized to 10kg child
-        base_svr = base_svr * (size_correction ** 0.5)
+        # Inverse Scaling: Larger child = Lower SVR
+        # size_factor > 1 for small babies (Inc Resistance), < 1 for big kids (Dec Resistance)
+        svr_scaling_factor = (10.0 / input.weight_kg) ** 0.5
+        base_svr = base_svr * svr_scaling_factor
 
         # Temp Correction
         temp_factor = 1.0
@@ -397,17 +572,46 @@ class PediaFlowPhysicsEngine:
         }
 
     @staticmethod
-    def _calculate_renal_function(age_months: int) -> float:
+    def _calculate_safe_rr_limit(age_months: int, baseline_rr: int) -> int:
+        """
+        Calculates the Respiratory Rate Safety Stop Limit.
+        Logic: Stop if RR rises > 20% from baseline OR exceeds age-specific severe threshold.
+        """
+        # WHO Severe Thresholds
+        if age_months < 2: severe_limit = 60
+        elif age_months < 12: severe_limit = 50
+        elif age_months < 60: severe_limit = 40
+        else: severe_limit = 30
+        
+        if baseline_rr > severe_limit:
+            # Already sick - stop if RR increases by 15%
+            return int(baseline_rr * 1.15)
+        else:
+            # Normal baseline - stop at absolute threshold
+            return severe_limit + 10
+
+    @staticmethod
+    def _calculate_renal_function(age_months: int, time_since_urine: float) -> float:
         """
         Calculates Renal Maturity Factor (0.0 to 1.0).
         """
         if age_months >= 24:
-            return 1.0
+            maturity = 1.0
         
         # Linear maturation from 0.3 (birth) to 1.0 (2 years)
         # Slope = 0.7 / 24 = ~0.029 per month
-        maturity = 0.3 + (0.029 * age_months)
-        return min(maturity, 1.0)
+        else: 
+            maturity = PHYSICS_CONSTANTS.NEONATE_RENAL_MATURITY_BASE + \
+                       (PHYSICS_CONSTANTS.RENAL_MATURATION_RATE_PER_MONTH * age_months)
+            maturity = min(maturity, 1.0)
+        
+        # AKI Shutdown Logic
+        if time_since_urine > 6.0:
+            maturity *= 0.1 # Shutdown
+        elif time_since_urine > 4.0:
+            maturity *= 0.5 # Oliguria
+            
+        return maturity
 
     @staticmethod
     def _calculate_insensible_loss(input: PatientInput, bsa: float) -> float:
@@ -426,23 +630,144 @@ class PediaFlowPhysicsEngine:
         if input.respiratory_rate_bpm > 50:
             daily_loss_ml *= 1.10
             
-        return daily_loss_ml / 1440.0  # Convert per day -> per minute
+        return daily_loss_ml / PHYSICS_CONSTANTS.MINUTES_PER_DAY
 
     @staticmethod
-    def initialize_physics_engine(input: PatientInput) -> PhysiologicalParams:
+    def create_digital_twin(data: dict) -> ValidationResult:
+        """
+        SAFE FACTORY: The main entry point for the UI/API.
+        Handles validation, logic, confidence scoring, and error formatting.
+        """
+        warnings = CalculationWarnings()
+        audit = None
+        
+        try:
+            # 1. Pre-Validation / Input Sanitization
+            # Check Hct/Hb consistency before object creation to log warning
+            if 'hemoglobin_g_dl' in data and 'hematocrit_pct' in data:
+                hb = float(data['hemoglobin_g_dl'])
+                hct = float(data['hematocrit_pct'])
+                if abs(hct - (hb * 3)) > 15:
+                    warnings.hct_autocorrected = (hct, hb * 3)
+
+            # 2. Create Patient Input (Validates types and ranges)
+            patient = PatientInput(**data)
+
+            # 3. Calculate Confidence Score
+            # Base 60%, +10% per optional category
+            score = 0.6
+            if patient.plasma_albumin_g_dl: score += 0.15
+            if patient.lactate_mmol_l: score += 0.1
+            if patient.platelet_count: score += 0.1
+            if patient.height_cm: score += 0.05
+            confidence = min(score, 1.0)
+
+            # 4. Input Quality Checks
+            if not patient.plasma_albumin_g_dl: 
+                warnings.missing_optimal_inputs.append("Albumin")
+            if not patient.lactate_mmol_l: 
+                warnings.missing_optimal_inputs.append("Lactate")
+                
+            if patient.muac_cm < 11.5 and patient.diagnosis in [ClinicalDiagnosis.SEPTIC_SHOCK, ClinicalDiagnosis.DENGUE_SHOCK]:
+                warnings.sam_shock_conflict = True
+
+            # 5. Initialize Physics Engine (Passing warnings container)
+            params = PediaFlowPhysicsEngine.initialize_physics_engine(patient, warnings)
+            state = PediaFlowPhysicsEngine.initialize_simulation_state(patient, params)
+
+            audit = AuditLog(inputs_hash=hash(str(data)))
+
+            return ValidationResult(
+                success=True,
+                patient=patient,
+                physics_params=params,
+                initial_state=state,
+                errors=[],
+                warnings=warnings,
+                confidence_score=confidence,
+                audit_log=audit
+            )
+
+        except (CriticalConditionError, ValueError, DataTypeError) as e:
+            return ValidationResult(
+                success=False,
+                patient=None,
+                physics_params=None,
+                initial_state=None,
+                errors=[str(e)],
+                warnings=warnings,
+                confidence_score=0.0,
+                audit_log=audit
+            )
+        except Exception as e:
+            return ValidationResult(
+                success=False,
+                patient=None,
+                physics_params=None,
+                initial_state=None,
+                errors=[f"System Error: {str(e)}"],
+                warnings=warnings,
+                confidence_score=0.0,
+                audit_log=audit
+            )
+
+    @staticmethod
+    def initialize_physics_engine(input: PatientInput, warnings: CalculationWarnings) -> PhysiologicalParams:
         """
         MASTER BUILDER: Creates the unique 'PhysiologicalParams' for this child.
         """
         bsa = PediaFlowPhysicsEngine._calculate_bsa(input.weight_kg, input.height_cm)
+        insensible_rate = PediaFlowPhysicsEngine._calculate_insensible_loss(input, bsa)
         vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
         hemo = PediaFlowPhysicsEngine._calculate_hemodynamics(input)
-        renal_factor = PediaFlowPhysicsEngine._calculate_renal_function(input.age_months)
+        renal_factor = PediaFlowPhysicsEngine._calculate_renal_function(
+            input.age_months, input.time_since_last_urine_hours
+        )
         
         # Dengue Logic: Dynamic K_f
         k_f_base = 0.01
+        sigma = 0.9 # Tight vessels
         if input.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
-            # Initial K_f is higher due to inflammatory markers
-            k_f_base = 0.02 
+            if input.illness_day <= 3:
+                sigma = 0.9 # Febrile
+            elif input.illness_day <= 6:
+                sigma = 0.3 # Critical Leak
+                k_f_base = 0.025
+            else:
+                sigma = 0.7 # Recovery
+        
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+            sigma = 0.4
+            k_f_base = 0.02
+            
+        # Continuous Albumin Estimation
+        albumin = input.plasma_albumin_g_dl
+        albumin_uncertainty = 0.0 # Exact if measured
+        if albumin is None:
+            warnings.albumin_estimated = True
+            albumin_uncertainty = 0.8 # +/- 0.8 g/dL uncertainty if estimated
+            if input.muac_cm < 11.5: albumin = 2.5
+            elif input.muac_cm > 12.5: albumin = 4.0
+            else: albumin = 2.5 + ((input.muac_cm - 11.5) * 1.5) # Linear interp
+            if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+                albumin = min(albumin * 0.85, 3.5) 
+
+        # Oncotic Pressure Calculation
+        pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
+
+        # Glucose Stress Logic
+        glucose_burn = 5.0 if input.age_months < 1 else 3.0
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+            glucose_burn *= 1.5 # Stress
+        if input.age_months < 3: # Low glycogen stores
+            glucose_burn *= 1.2
+        # Lactate Logic (Tissue Hypoxia)
+        if input.lactate_mmol_l and input.lactate_mmol_l > 4.0:
+            glucose_burn *= 1.5 # High stress
+            
+        # Platelet Logic (Bleeding Risk)
+        if input.platelet_count and input.platelet_count < 20000:
+            hemo["contractility"] *= 0.5 # Limit pressure generation to prevent bleed
 
         # SAM Logic: Tissue Compliance
         is_sam = input.muac_cm < 11.5
@@ -453,25 +778,14 @@ class PediaFlowPhysicsEngine:
         target_map = 55.0 if input.age_months < 12 else 65.0
         max_hr = 160 if input.age_months > 12 else 180
 
-        # 1. Calculate Oncotic Pressure (Starling Force)
-        # Formula: π = 2.1A + 0.16A² + 0.009A³
-        albumin = input.plasma_albumin_g_dl
-        if albumin is None:
-            # Estimate based on SAM status
-            albumin = 2.5 if (input.muac_cm < 11.5) else 4.0
-            
-        pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
+        stop_rr = PediaFlowPhysicsEngine._calculate_safe_rr_limit(
+            input.age_months, 
+            input.respiratory_rate_bpm
+        )
         
-        # 2. Reflection Coefficient (Sigma)
-        # How "leaky" are the vessels to albumin?
-        # Normal = 0.9 (Tight). Dengue/Sepsis = 0.4 (Leaky).
-        sigma = 0.9
-        if input.diagnosis in [ClinicalDiagnosis.DENGUE_SHOCK, ClinicalDiagnosis.SEPTIC_SHOCK]:
-            sigma = 0.4
-            
-        # 3. Glucose Utilization
-        # Neonates burn sugar faster (4-6 mg/kg/min) than children (2-3 mg/kg/min)
-        glucose_burn_rate = 5.0 if input.age_months < 1 else 3.0
+        # Flag Neonatal Colloid Risk
+        if input.age_months < 1 and input.diagnosis in [ClinicalDiagnosis.SEPTIC_SHOCK, ClinicalDiagnosis.DENGUE_SHOCK]:
+             warnings.missing_optimal_inputs.append("Neonatal Colloid Contraindication Risk")
 
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
@@ -496,11 +810,13 @@ class PediaFlowPhysicsEngine:
             intracellular_sodium_bias=sodium_bias,
             target_map_mmhg=target_map,
             target_heart_rate_upper_limit=max_hr,
+            target_respiratory_rate_limit=stop_rr, 
             
-            insensible_loss_ml_min=PediaFlowPhysicsEngine._calculate_insensible_loss(input, bsa),
+            insensible_loss_ml_min=insensible_rate,
             plasma_oncotic_pressure_mmhg=pi_plasma,
             reflection_coefficient_sigma=sigma,
-            glucose_utilization_mg_kg_min=glucose_burn_rate,
+            glucose_utilization_mg_kg_min=glucose_burn,
+            albumin_uncertainty_g_dl=albumin_uncertainty,
         )
 
     @staticmethod
@@ -510,12 +826,19 @@ class PediaFlowPhysicsEngine:
         """
 
         vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
-        v_icf_normal = input.weight_kg * vols["icf_ratio"]
+        v_icf_normal = vols["v_intracellular"]
+
+        # ICF Safety Check
+        if v_icf_normal < 0.1:
+            raise ValueError(f"Calculated ICF Volume too low ({v_icf_normal:.2f}L). Check Weight/Age.")
         
         # 1. Estimate Current Volumes based on Dehydration Severity
         deficit_factor = 0.0
         if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
-            deficit_factor = 0.10 # 10% weight loss
+            if input.capillary_refill_sec > 4:
+                deficit_factor = 0.15 # Severe/Shock (15%)
+            else:
+                deficit_factor = 0.10 # Standard Severe (10%)
         elif input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
             deficit_factor = 0.08 # Conservative estimate for SAM
         
@@ -525,13 +848,26 @@ class PediaFlowPhysicsEngine:
         # 75% loss from Interstitial, 25% from Blood
         current_v_inter = params.v_inter_normal_l - (vol_loss_liters * 0.75)
         current_v_blood = params.v_blood_normal_l - (vol_loss_liters * 0.25)
+
+        # Volume Floor (Relative, not absolute)
+        min_v_blood = params.v_blood_normal_l * 0.4 # Death threshold
+        current_v_blood = max(current_v_blood, min_v_blood)
+        current_v_inter = max(current_v_inter, 0.05)
+
+        # MAP Calculation via Pulse Pressure
+        if input.diastolic_bp:
+            # Gold Standard: MAP = DBP + 1/3 Pulse Pressure
+            map_est = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
+        else:
+            # Fallback estimation
+            is_vasodilated = input.diagnosis in [ClinicalDiagnosis.SEPTIC_SHOCK, ClinicalDiagnosis.DENGUE_SHOCK]
+            dbp_ratio = 0.4 if is_vasodilated else 0.6
+            estimated_dbp = input.systolic_bp * dbp_ratio
+            map_est = estimated_dbp + (input.systolic_bp - estimated_dbp) / 3.0
         
         # 2. Ongoing Loss Estimation (The Third Vector)
-        ongoing_loss_rate = 0.0
-        if input.ongoing_losses_severity == "MILD":
-            ongoing_loss_rate = (input.weight_kg * 5) / 60.0 # 5ml/kg/hr
-        elif input.ongoing_losses_severity == "SEVERE":
-            ongoing_loss_rate = (input.weight_kg * 10) / 60.0 # 10ml/kg/hr
+        loss_rate_ml_kg = input.ongoing_losses_severity.value
+        ongoing_loss_rate = (input.weight_kg * loss_rate_ml_kg) / 60.0 # Convert hr -> min
 
         # Initialize Glucose
         start_glucose = input.current_glucose if input.current_glucose else 90.0
@@ -539,12 +875,12 @@ class PediaFlowPhysicsEngine:
         return SimulationState(
             time_minutes=0.0,
             
-            v_blood_current_l=max(current_v_blood, 0.1), # Prevent zero/neg
+            v_blood_current_l=current_v_blood,
             v_interstitial_current_l=max(current_v_inter, 0.1),
             v_intracellular_current_l=v_icf_normal, 
             
             # Pressures (Estimated from Vitals for T=0)
-            map_mmHg=float(input.systolic_bp) * 0.65, # Approx MAP
+            map_mmHg=map_est,
             cvp_mmHg=2.0 if deficit_factor > 0 else 5.0,
             pcwp_mmHg=4.0,
             p_interstitial_mmHg=-2.0 if deficit_factor > 0 else 0.0,
