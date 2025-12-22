@@ -289,6 +289,9 @@ class PediaFlowPhysicsEngine:
             tbw_ratio += 0.05  # +5% Total Water
             ecf_ratio += 0.05  # +5% Extracellular Fluid
 
+        # Calculate Derived ICF Ratio (Conservation of Mass)
+        icf_ratio = tbw_ratio - ecf_ratio
+
         # 3. Calculate Volumes (Liters)
         total_water = input.weight_kg * tbw_ratio
         ecf_total = input.weight_kg * ecf_ratio
@@ -304,6 +307,7 @@ class PediaFlowPhysicsEngine:
             "tbw_fraction": tbw_ratio,
             "v_blood": v_blood,
             "v_interstitial": v_interstitial
+            "icf_ratio": icf_ratio
         }
 
     @staticmethod
@@ -422,7 +426,7 @@ class PediaFlowPhysicsEngine:
             max_cardiac_output_l_min=(input.weight_kg * 0.15), # approx 150ml/kg/min max
             venous_compliance_ml_mmhg=input.weight_kg * 1.5,
             osmotic_conductance_k=0.1,
-            lymphatic_drainage_capacity_ml_min=input.weight_kg * 0.002, # 2ml/kg/hr max lymph
+            lymphatic_drainage_capacity_ml_min=input.weight_kg * 0.03, # ~1.8 ml/kg/hr
             
             intracellular_sodium_bias=sodium_bias,
             target_map_mmhg=target_map,
@@ -436,6 +440,10 @@ class PediaFlowPhysicsEngine:
         """
         Creates the 'T=0' State based on current Clinical Presentation.
         """
+
+        vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
+        v_icf_normal = input.weight_kg * vols["icf_ratio"]
+        
         # 1. Estimate Current Volumes based on Dehydration Severity
         deficit_factor = 0.0
         if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
@@ -462,7 +470,7 @@ class PediaFlowPhysicsEngine:
             
             v_blood_current_l=max(current_v_blood, 0.1), # Prevent zero/neg
             v_interstitial_current_l=max(current_v_inter, 0.1),
-            v_intracellular_current_l=input.weight_kg * 0.4, # Approx 40% weight
+            v_intracellular_current_l=v_icf_normal, 
             
             # Pressures (Estimated from Vitals for T=0)
             map_mmHg=float(input.systolic_bp) * 0.65, # Approx MAP
