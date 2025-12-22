@@ -25,6 +25,11 @@ class ClinicalDiagnosis(Enum):
     SAM_DEHYDRATION = "sam_severe_malnutrition" # Vulnerable State
     UNKNOWN = "undifferentiated_shock"
 
+class ShockSeverity(Enum):
+    COMPENSATED = "compensated_shock"     # BP Normal, HR High
+    HYPOTENSIVE = "decompensated_shock"   # BP Low
+    IRREVERSIBLE = "irreversible_shock"   # Organ Failure
+
 class FluidType(Enum):
     RL = "ringer_lactate"
     NS = "normal_saline_0.9"
@@ -94,6 +99,11 @@ class PatientInput:
     # Useful for accurate BSA (Insensible Loss) and Z-Score
     height_cm: Optional[float] = None
 
+    # Critical for Leak Phase & Oncotic Pressure calculation
+    plasma_albumin_g_dl: Optional[float] = None 
+    platelet_count: Optional[int] = None
+    lactate_mmol_l: Optional[float] = None
+
 # --- 3. INTERNAL PHYSICS CONSTANTS (The "Twin" Configuration) ---
 
 @dataclass
@@ -151,6 +161,15 @@ class PhysiologicalParams:
     # Formula: (BSA * TempFactor) / 24h
     insensible_loss_ml_min: float 
 
+    # ONCOTIC PRESSURE PHYSICS (Starling Forces)
+    # The "Pull" keeping fluid in vessels. Critical for Dengue/Sepsis.
+    plasma_oncotic_pressure_mmhg: float
+    reflection_coefficient_sigma: float  # 0.9 (Tight) vs 0.3 (Leaky)
+
+    # GLUCOSE DYNAMICS
+    # Metabolic burn rate to predict hypoglycemia
+    glucose_utilization_mg_kg_min: float 
+
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
 @dataclass
@@ -193,6 +212,13 @@ class SimulationState:
     # These subtract from the total volume available for BP
     q_ongoing_loss_ml_min: float  # Diarrhea/Vomiting rate
     q_insensible_loss_ml_min: float # Sweat/Respiration rate
+
+    # METABOLIC TRACKING
+    current_glucose_mg_dl: float
+    
+    # BOLUS SAFETY TRACKING
+    cumulative_bolus_count: int
+    time_since_last_bolus_min: float
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
@@ -292,6 +318,9 @@ class PediaFlowPhysicsEngine:
         # Calculate Derived ICF Ratio (Conservation of Mass)
         icf_ratio = tbw_ratio - ecf_ratio
 
+        # Calculate Actual Volume
+        v_intracellular = input.weight_kg * icf_ratio
+
         # 3. Calculate Volumes (Liters)
         total_water = input.weight_kg * tbw_ratio
         ecf_total = input.weight_kg * ecf_ratio
@@ -306,14 +335,15 @@ class PediaFlowPhysicsEngine:
         return {
             "tbw_fraction": tbw_ratio,
             "v_blood": v_blood,
-            "v_interstitial": v_interstitial
+            "v_interstitial": v_interstitial,
+            "v_intracellular": v_intracellular,
             "icf_ratio": icf_ratio
         }
 
     @staticmethod
     def _calculate_hemodynamics(input: PatientInput) -> dict:
         """
-        Calculates Heart Strength (Contractility) and Vessel Resistance (SVR).
+        Calculates SVR using Pediatric Lookup Tables and nonlinear viscosity.
         """
         # 1. Contractility (The Pump Strength)
         # Baseline = 1.0. SAM/Sepsis reduces it.
@@ -325,24 +355,39 @@ class PediaFlowPhysicsEngine:
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
             contractility *= 0.7  # Septic myocardial depression
 
-        # 2. Systemic Vascular Resistance (SVR)
-        # SVR = Base * Viscosity * TempFactor
+        # 2. Viscosity 
+        # Using Poiseuille's approximation: (Hct/45)^2.5
+        # If Hct is missing, assume 35% (normal child) or 25% (anemic if Hb low)
+        if input.hematocrit_pct:
+            hct = input.hematocrit_pct
+        elif input.hemoglobin_g_dl:
+            hct = input.hemoglobin_g_dl * 3.0 # Rough est
+        else:
+            hct = 35.0
+            
+        viscosity = (hct / 45.0) ** 2.5
         
-        # A. Viscosity (Driven by Anemia)
-        # Normal Hb ~12. Viscosity drops linearly with anemia.
-        # Simplified Physics: Relative Viscosity approx 1.0 at Hb 12.
-        viscosity = 0.3 + (0.058 * input.hemoglobin_g_dl) 
-        
-        # B. Temperature (Vasoconstriction)
+        # 3. SVR - Dimensional Correctness
+        # Using Age-Based Norms (dynes-sec-cm-5)
+        if input.age_months < 1:
+            base_svr = 1800.0
+        elif input.age_months < 12:
+            base_svr = 1400.0
+        else:
+            base_svr = 1000.0
+            
+        # Adjusting for Size (Inverse relationship to surface area approx)
+        # Larger child = Lower resistance vessels
+        size_correction = 10 / input.weight_kg # Normalized to 10kg child
+        base_svr = base_svr * (size_correction ** 0.5)
+
+        # Temp Correction
         temp_factor = 1.0
         if input.temp_celsius < 36.0:
-            temp_factor = 1.5  # Clamped vessels (Cold)
+            temp_factor = 1.5
         elif input.temp_celsius > 38.5:
-            temp_factor = 0.8  # Dilated vessels (Fever)
-
-        # Base SVR approximation (inverse of size)
-        base_svr = 80 * (1 / (input.weight_kg ** 0.5))
-        
+            temp_factor = 0.8
+            
         svr = base_svr * viscosity * temp_factor
 
         return {
@@ -408,6 +453,26 @@ class PediaFlowPhysicsEngine:
         target_map = 55.0 if input.age_months < 12 else 65.0
         max_hr = 160 if input.age_months > 12 else 180
 
+        # 1. Calculate Oncotic Pressure (Starling Force)
+        # Formula: π = 2.1A + 0.16A² + 0.009A³
+        albumin = input.plasma_albumin_g_dl
+        if albumin is None:
+            # Estimate based on SAM status
+            albumin = 2.5 if (input.muac_cm < 11.5) else 4.0
+            
+        pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
+        
+        # 2. Reflection Coefficient (Sigma)
+        # How "leaky" are the vessels to albumin?
+        # Normal = 0.9 (Tight). Dengue/Sepsis = 0.4 (Leaky).
+        sigma = 0.9
+        if input.diagnosis in [ClinicalDiagnosis.DENGUE_SHOCK, ClinicalDiagnosis.SEPTIC_SHOCK]:
+            sigma = 0.4
+            
+        # 3. Glucose Utilization
+        # Neonates burn sugar faster (4-6 mg/kg/min) than children (2-3 mg/kg/min)
+        glucose_burn_rate = 5.0 if input.age_months < 1 else 3.0
+
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
@@ -432,7 +497,10 @@ class PediaFlowPhysicsEngine:
             target_map_mmhg=target_map,
             target_heart_rate_upper_limit=max_hr,
             
-            insensible_loss_ml_min=PediaFlowPhysicsEngine._calculate_insensible_loss(input, bsa)
+            insensible_loss_ml_min=PediaFlowPhysicsEngine._calculate_insensible_loss(input, bsa),
+            plasma_oncotic_pressure_mmhg=pi_plasma,
+            reflection_coefficient_sigma=sigma,
+            glucose_utilization_mg_kg_min=glucose_burn_rate,
         )
 
     @staticmethod
@@ -465,6 +533,9 @@ class PediaFlowPhysicsEngine:
         elif input.ongoing_losses_severity == "SEVERE":
             ongoing_loss_rate = (input.weight_kg * 10) / 60.0 # 10ml/kg/hr
 
+        # Initialize Glucose
+        start_glucose = input.current_glucose if input.current_glucose else 90.0
+
         return SimulationState(
             time_minutes=0.0,
             
@@ -493,5 +564,9 @@ class PediaFlowPhysicsEngine:
             current_weight_dynamic_kg=input.weight_kg,
             
             q_ongoing_loss_ml_min=ongoing_loss_rate,
-            q_insensible_loss_ml_min=params.insensible_loss_ml_min
+            q_insensible_loss_ml_min=params.insensible_loss_ml_min,
+
+            current_glucose_mg_dl=start_glucose,
+            cumulative_bolus_count=0,
+            time_since_last_bolus_min=999.0 # Arbitrary high number
         )
