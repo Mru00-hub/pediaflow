@@ -7,6 +7,7 @@ and simulates fluid dynamics over time.
 
 import math
 from dataclasses import replace
+from typing import Optional, Dict
 
 # Import Data Models & Enums
 from models import (
@@ -471,7 +472,7 @@ class PediaFlowPhysicsEngine:
         current_v_inter = max(current_v_inter, 0.05)
 
         # MAP Calculation via Pulse Pressure
-        if input.diastolic_bp:
+        if input.diastolic_bp is not None:
             # Gold Standard: MAP = DBP + 1/3 Pulse Pressure
             map_est = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
         else:
