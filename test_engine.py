@@ -119,30 +119,34 @@ class TestPediaFlowEngine(unittest.TestCase):
         self.assertTrue(final_hct < 25.0, "Hematocrit did not dilute significantly")
         self.assertTrue(final_hct > 10.0, "Hematocrit dropped impossibly low")
 
-    def test_03_glucose_burn(self):
+        def test_03_glucose_burn(self):
         """
-        Metabolic Check: Glucose must drop if we give Saline (no sugar).
+        Metabolic Check: Glucose must drop on Saline, but RISE on D5 Bolus.
         """
         print("\nTEST 3: Glucose Burn")
         
-        # 1. Run 60 mins of Saline
-        sim_res = PediaFlowPhysicsEngine.run_simulation(
+        # 1. Run 60 mins of Saline (Maintenance Rate) -> Should Drop
+        sim_res_ns = PediaFlowPhysicsEngine.run_simulation(
             self.initial_state, self.params, FluidType.NS, 10, 60
         )
-        glucose_ns = sim_res['final_state'].current_glucose_mg_dl
+        glucose_ns = sim_res_ns['final_state'].current_glucose_mg_dl
         
-        # 2. Run 60 mins of D5-Saline
+        # 2. Run 60 mins of D5-Saline (BOLUS Rate: 200ml) -> Should Rise
+        # We give 20ml/kg (200ml) to overwhelm the metabolic burn
         sim_res_d5 = PediaFlowPhysicsEngine.run_simulation(
-            self.initial_state, self.params, FluidType.D5_NS, 10, 60
+            self.initial_state, self.params, FluidType.D5_NS, 200, 60
         )
         glucose_d5 = sim_res_d5['final_state'].current_glucose_mg_dl
         
         print(f"Start Glucose: 90 mg/dL")
-        print(f"End Glucose (NS): {glucose_ns:.1f} mg/dL")
-        print(f"End Glucose (D5): {glucose_d5:.1f} mg/dL")
+        print(f"End Glucose (NS Maintenance): {glucose_ns:.1f} mg/dL")
+        print(f"End Glucose (D5 Bolus):       {glucose_d5:.1f} mg/dL")
         
+        # NS should drop (metabolism consumes stores)
         self.assertTrue(glucose_ns < 90, "Glucose failed to drop on NS")
-        self.assertTrue(glucose_d5 > 90, "Glucose failed to rise on D5")
+        
+        # D5 Bolus should rise (Supply 166mg/min > Demand 30mg/min)
+        self.assertTrue(glucose_d5 > 100, f"Glucose failed to rise on D5 Bolus (Got {glucose_d5})")
 
 if __name__ == '__main__':
     unittest.main()
