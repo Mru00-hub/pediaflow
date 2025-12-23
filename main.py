@@ -131,6 +131,8 @@ async def get_prescription(patient: PatientRequest):
         # 1. Convert Pydantic model to dict (preserving Enums)
         # We exclude None/Defaults to let the Engine handle internal logic if needed
         patient_data = patient.dict() 
+        if 'request_timestamp' in patient_data:
+            del patient_data['request_timestamp']
         
         # 2. Run the Core Engine
         # The engine expects the 'PatientInput' structure which matches our schema
