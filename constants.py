@@ -1,3 +1,4 @@
+VERSION = "1.0.0"  
 from models import FluidType, FluidProperties
 
 class AGE_CONSTANTS:
