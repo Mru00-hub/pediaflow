@@ -396,45 +396,56 @@ class PediaFlowPhysicsEngine:
         # Usually 15% more than their normal blood volume
         opt_preload = (vols["v_blood"] * 1000.0) * 1.15
 
-        # 1. Determine Target MAP
+        # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
+        # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
+        deficit_factor = 0.0
+        if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+            deficit_factor = 0.15 if input.capillary_refill_sec > 4 else 0.10
+        elif input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
+            deficit_factor = 0.08
+            
+        vol_loss_liters = input.weight_kg * deficit_factor
+        current_v_blood_est = vols["v_blood"] - (vol_loss_liters * 0.25)
+        
+        # 2. Determine Target MAP
         if input.diastolic_bp is not None:
              start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
         else:
              start_map = input.systolic_bp * 0.65
 
-        # 2. Base Cardiac Output (Without Afterload Penalty)
-        preload_ratio = (vols["v_blood"] * 1000.0) / opt_preload
-        preload_efficiency = 1.0 if preload_ratio <= 1.2 else 0.8
+        # 3. Base Cardiac Output (Using EST VOLUME, not Normal Volume)
+        preload_ratio = (current_v_blood_est * 1000.0) / opt_preload
+        
+        # Standard Frank-Starling Logic
+        if preload_ratio < 0.5:
+             preload_efficiency = preload_ratio * 2.0 
+        elif preload_ratio <= 1.2:
+             preload_efficiency = 1.0 
+        else:
+             overstretch = preload_ratio - 1.2
+             preload_efficiency = max(0.4, 1.0 - (overstretch * 1.5))
         
         base_co = (
             (input.weight_kg * 0.15) * hemo["contractility"] * preload_efficiency
         )
 
-        # 3. Iterative Solver to find SVR
-        # We need SVR such that: MAP = (BaseCO * AfterloadPenalty(SVR)) * SVR + CVP
-        # Because AfterloadPenalty depends on SVR, we loop 3 times to converge.
-        
-        current_guess_svr = hemo["svr"] # Start with the age-based guess
-        assumed_cvp = 5.0
+        # 4. Iterative Solver to find SVR
+        current_guess_svr = hemo["svr"]
+        assumed_cvp = 2.0 if deficit_factor > 0 else 5.0 # Lower CVP if dehydrated
         
         for _ in range(10):
-            # A. Calculate Penalty based on current guess
-            # (Matches logic in _calculate_derivatives)
             normalized_svr = current_guess_svr / 1000.0
-            afterload_factor = 1.0 / (1.0 + (normalized_svr - 1.0) * afterload_sens)
+            denom = 1.0 + (normalized_svr - 1.0) * afterload_sens
+            afterload_factor = 1.0 / max(0.5, denom) 
             
-            # B. Calculate Resulting Flow
             effective_co = base_co * afterload_factor
             
-            # C. Recalculate Required SVR to hit Target MAP
             # SVR = (MAP - CVP) * 80 / Flow
             required_svr = ((start_map - assumed_cvp) * 80.0) / max(0.01, effective_co)
             
-            # D. Update guess (with simple damping to prevent oscillation)
             current_guess_svr = (current_guess_svr + required_svr) / 2.0
 
-        # Final Clamp
-        final_svr = max(200.0, min(current_guess_svr, 6000.0))
+        final_svr = max(200.0, min(current_guess_svr, 8000.0)) # Allowed higher SVR cap
         
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
@@ -596,7 +607,8 @@ class PediaFlowPhysicsEngine:
         # C. Afterload Penalty (SVR opposing flow)
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
         normalized_svr = params.svr_resistance / 1000.0
-        afterload_factor = 1.0 / (1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity) 
+        denom = 1.0 + (normalized_svr - 1.0) * afterload_sens
+        afterload_factor = 1.0 / max(0.5, denom)  
 
         # D. Resulting Cardiac Output (L/min)
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
