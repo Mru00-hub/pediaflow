@@ -372,9 +372,9 @@ class PediaFlowPhysicsEngine:
              warnings.missing_optimal_inputs.append("Neonatal Colloid Contraindication Risk")
 
         # 1. Calculate Afterload Sensitivity
-        # Normal = 1.0. 
-        # SAM or Hypothermia (<36C) = 1.5 (Heart is very sensitive to resistance)
-        afterload_sens = 1.0
+        # Normal = 0.2 (Healthy hearts maintain flow against resistance).
+        # SAM or Hypothermia = 1.5 (Weak hearts give up easily).
+        afterload_sens = 0.2 
         if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
             afterload_sens = 1.5
 
@@ -417,7 +417,7 @@ class PediaFlowPhysicsEngine:
         current_guess_svr = hemo["svr"] # Start with the age-based guess
         assumed_cvp = 5.0
         
-        for _ in range(3):
+        for _ in range(10):
             # A. Calculate Penalty based on current guess
             # (Matches logic in _calculate_derivatives)
             normalized_svr = current_guess_svr / 1000.0
