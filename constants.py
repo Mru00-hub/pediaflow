@@ -1,5 +1,19 @@
-from models import FluidType, FluidProperties
+from enum import Enum
+from dataclasses import dataclass
 VERSION = "1.0.0"  
+
+
+
+@dataclass
+class FluidProperties:
+    name: str
+    sodium_meq_l: float
+    glucose_g_l: float
+    oncotic_pressure_mmhg: float  # The "Pull" force
+    vol_distribution_intravascular: float  # How much stays in veins immediately?
+    
+    # Critical for specific logic
+    is_colloid: bool = False
 
 class AGE_CONSTANTS:
     # Age (months): (Min RR, Max RR)
