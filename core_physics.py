@@ -607,8 +607,8 @@ class PediaFlowPhysicsEngine:
         # C. Afterload Penalty (SVR opposing flow)
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
         normalized_svr = params.svr_resistance / 1000.0
-        denom = 1.0 + (normalized_svr - 1.0) * afterload_sens
-        afterload_factor = 1.0 / max(0.5, denom)  
+        denom = 1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity
+        afterload_factor = 1.0 / max(0.5, denom)
 
         # D. Resulting Cardiac Output (L/min)
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
