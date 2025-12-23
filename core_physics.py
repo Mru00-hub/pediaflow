@@ -399,6 +399,37 @@ class PediaFlowPhysicsEngine:
         # Usually 15% more than their normal blood volume
         opt_preload = (vols["v_blood"] * 1000.0) * 1.15
 
+        # --- FIX STARTS HERE: AUTO-CALIBRATION ---
+        # 1. Calculate the Target MAP based on the Doctor's Input (T=0)
+        # We use the same formula as in initialize_simulation_state
+        if input.diastolic_bp:
+             start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
+        else:
+             start_map = input.systolic_bp * 0.65 # Approximate
+
+        # 2. Calculate the Theoretical Cardiac Output at T=0
+        # (Based on the Contractility & Preload we just calculated)
+        preload_ratio = (vols["v_blood"] * 1000.0) / opt_preload
+        preload_efficiency = 1.0 if preload_ratio <= 1.2 else 0.8 # Simplified start
+        
+        # Note: We must use the same formula structure as _calculate_derivatives
+        theoretical_co = (
+            (input.weight_kg * 0.15) * # max_co
+            hemo["contractility"] * preload_efficiency
+        )
+
+        # 3. REVERSE ENGINEER SVR
+        # We force SVR to be exactly what is needed to match the Starting MAP.
+        # Formula: MAP = (CO * SVR / 80) + CVP
+        # Therefore: SVR = (MAP - CVP) * 80 / CO
+        
+        assumed_cvp = 5.0
+        required_svr = ((start_map - assumed_cvp) * 80.0) / max(0.1, theoretical_co)
+        
+        # Apply limits so we don't get impossible physics (e.g. infinity)
+        final_svr = max(200.0, min(required_svr, 5000.0))
+        # --- FIX ENDS HERE ---
+
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
@@ -407,7 +438,7 @@ class PediaFlowPhysicsEngine:
             cardiac_contractility=hemo["contractility"],
             heart_stiffness_k=4.0, # Pediatric constant
             
-            svr_resistance=hemo["svr"],
+            svr_resistance=final_svr,
             capillary_filtration_k=k_f_base,
             blood_viscosity_eta=hemo["viscosity"],
             
