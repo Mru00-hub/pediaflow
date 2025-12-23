@@ -390,24 +390,8 @@ class PediaFlowPhysicsEngine:
         elif input.capillary_refill_sec > 2:
             base_pc = 20.0
         else:
-            base_pc = 25.0
-            
-        # 3. Base Cardiac Output (Using EST VOLUME)
-        preload_ratio = (current_v_blood_est * 1000.0) / opt_preload
-        
-        # Standard Frank-Starling Logic (MATCHING DERIVATIVES)
-        if preload_ratio <= 1.0:
-             preload_efficiency = preload_ratio
-        elif preload_ratio <= 1.2:
-             preload_efficiency = 1.0 
-        else:
-             overstretch = preload_ratio - 1.2
-             preload_efficiency = max(0.4, 1.0 - (overstretch * 1.5))
-        
-        base_co = (
-            (input.weight_kg * 0.15) * hemo["contractility"] * preload_efficiency
-        )
-
+            base_pc = 25.0    
+    
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
         deficit_factor = 0.0
