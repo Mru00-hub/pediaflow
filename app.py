@@ -22,7 +22,7 @@ NO LOGIC is implemented here. This is purely the definitions of the variables
 that will drive the Differential Equations.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import List, Optional
 
@@ -1018,8 +1018,6 @@ class PediaFlowPhysicsEngine:
         
         # A. Preload (Stretch)
         current_blood_ml = state.v_blood_current_l * 1000.0
-        # Optimal preload is roughly 10-15% above normal blood volume
-        optimal_preload_ml = params.v_blood_normal_l * 1000.0 * 1.15
         
         # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
         preload_ratio = current_blood_ml / params.optimal_preload_ml
@@ -1089,6 +1087,7 @@ class PediaFlowPhysicsEngine:
 
         # OSMOTIC SHIFT (Bidirectional)
         # Handles Hypertonic (water OUT) and Hypotonic (water IN)
+        # osmotic_conductance_k units: (mL / mEq) - Converts solute flux to solvent flow
         ecf_volume_l = state.v_blood_current_l + state.v_interstitial_current_l
         q_osmotic = 0.0
         
@@ -1189,7 +1188,7 @@ class PediaFlowPhysicsEngine:
         
         # 1. Supply: How much glucose is in the fluid? (e.g., D5 = 50g/L = 50,000mg/L)
         glucose_conc_mg_l = FLUID_LIBRARY.get(fluid_type).glucose_g_l * 1000.0
-        glucose_in_mg = (infusion_rate_ml_hr / 60.0) * glucose_conc_mg_l * dt_minutes
+        glucose_in_mg = (rate_min / 1000.0) * glucose_conc_mg_l * dt_minutes
 
         # 2. Demand: Metabolic Burn Rate (mg/min)
         glucose_burn_mg = (params.glucose_utilization_mg_kg_min * params.weight_kg) * dt_minutes
@@ -1282,11 +1281,14 @@ class PediaFlowPhysicsEngine:
                  aborted = True
                  break
 
-            # Reassessment Trigger
-            # If infused > 10ml/kg (approx one bolus) and haven't flagged yet
+            # Reassessment Trigger & Counter Increment
             bolus_threshold_vol = params.weight_kg * 10.0
+            
             if current_state.total_volume_infused_ml >= bolus_threshold_vol and current_state.cumulative_bolus_count == 0:
                 triggers.append(f"REASSESS: 10ml/kg ({int(bolus_threshold_vol)}ml) delivered. Check Vitals/Liver Span.")
+                
+                # Increment the counter in the state so we don't trigger again next minute
+                current_state = replace(current_state, cumulative_bolus_count=1)
                 
         return {
             "final_state": current_state,
