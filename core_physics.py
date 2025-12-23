@@ -382,9 +382,6 @@ class PediaFlowPhysicsEngine:
         # Replaces the magic number logic
         interstitial_compliance = 50.0 if input.muac_cm < 11.5 else 100.0
 
-        # Previous Phase 2 logic glue
-        afterload_sens = 1.5 if (input.muac_cm < 11.5 or input.temp_celsius < 36.0) else 1.0
-        
         # 2. Calculate Baseline Capillary Pressure
         # Normal = 25 mmHg. 
         # Deep Shock = 15 mmHg (shut down). Compensated = 20 mmHg.
@@ -399,37 +396,46 @@ class PediaFlowPhysicsEngine:
         # Usually 15% more than their normal blood volume
         opt_preload = (vols["v_blood"] * 1000.0) * 1.15
 
-        # --- FIX STARTS HERE: AUTO-CALIBRATION ---
-        # 1. Calculate the Target MAP based on the Doctor's Input (T=0)
-        # We use the same formula as in initialize_simulation_state
-        if input.diastolic_bp:
+        # 1. Determine Target MAP
+        if input.diastolic_bp is not None:
              start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
         else:
-             start_map = input.systolic_bp * 0.65 # Approximate
+             start_map = input.systolic_bp * 0.65
 
-        # 2. Calculate the Theoretical Cardiac Output at T=0
-        # (Based on the Contractility & Preload we just calculated)
+        # 2. Base Cardiac Output (Without Afterload Penalty)
         preload_ratio = (vols["v_blood"] * 1000.0) / opt_preload
-        preload_efficiency = 1.0 if preload_ratio <= 1.2 else 0.8 # Simplified start
+        preload_efficiency = 1.0 if preload_ratio <= 1.2 else 0.8
         
-        # Note: We must use the same formula structure as _calculate_derivatives
-        theoretical_co = (
-            (input.weight_kg * 0.15) * # max_co
-            hemo["contractility"] * preload_efficiency
+        base_co = (
+            (input.weight_kg * 0.15) * hemo["contractility"] * preload_efficiency
         )
 
-        # 3. REVERSE ENGINEER SVR
-        # We force SVR to be exactly what is needed to match the Starting MAP.
-        # Formula: MAP = (CO * SVR / 80) + CVP
-        # Therefore: SVR = (MAP - CVP) * 80 / CO
+        # 3. Iterative Solver to find SVR
+        # We need SVR such that: MAP = (BaseCO * AfterloadPenalty(SVR)) * SVR + CVP
+        # Because AfterloadPenalty depends on SVR, we loop 3 times to converge.
         
+        current_guess_svr = hemo["svr"] # Start with the age-based guess
         assumed_cvp = 5.0
-        required_svr = ((start_map - assumed_cvp) * 80.0) / max(0.1, theoretical_co)
         
-        # Apply limits so we don't get impossible physics (e.g. infinity)
-        final_svr = max(200.0, min(required_svr, 5000.0))
-        # --- FIX ENDS HERE ---
+        for _ in range(3):
+            # A. Calculate Penalty based on current guess
+            # (Matches logic in _calculate_derivatives)
+            normalized_svr = current_guess_svr / 1000.0
+            afterload_factor = 1.0 / (1.0 + (normalized_svr - 1.0) * afterload_sens)
+            
+            # B. Calculate Resulting Flow
+            effective_co = base_co * afterload_factor
+            
+            # C. Recalculate Required SVR to hit Target MAP
+            # SVR = (MAP - CVP) * 80 / Flow
+            required_svr = ((start_map - assumed_cvp) * 80.0) / max(0.01, effective_co)
+            
+            # D. Update guess (with simple damping to prevent oscillation)
+            current_guess_svr = (current_guess_svr + required_svr) / 2.0
 
+        # Final Clamp
+        final_svr = max(200.0, min(current_guess_svr, 6000.0))
+        
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
