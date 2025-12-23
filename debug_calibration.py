@@ -1,6 +1,8 @@
 # debug_calibration.py
 from core_physics import PediaFlowPhysicsEngine
-from models import PatientInput, ClinicalDiagnosis, CalculationWarnings
+# ADDED: OngoingLosses to imports
+from models import PatientInput, ClinicalDiagnosis, CalculationWarnings, OngoingLosses
+from constants import FLUID_LIBRARY, FluidType
 
 def run_debug():
     # 1. Define a "Healthy Child" (Expected BP: 100/65 -> MAP ~76.6)
@@ -14,7 +16,11 @@ def run_debug():
         "hemoglobin_g_dl": 12.0, "current_sodium": 140.0,
         "current_glucose": 90.0, "hematocrit_pct": 36.0,
         "diagnosis": ClinicalDiagnosis.UNKNOWN,
-        "ongoing_losses_severity": 0, "illness_day": 1,
+        
+        # FIX: Use the Enum, not the integer 0
+        "ongoing_losses_severity": OngoingLosses.NONE, 
+        
+        "illness_day": 1,
         "iv_set_available": 20
     }
 
@@ -34,8 +40,6 @@ def run_debug():
 
     # 5. RUN THE PHYSICS for T=0
     # We manually call the derivative function to see what the engine *thinks* happens next
-    # (Using a dummy fluid since it doesn't matter for T=0 snapshot)
-    from constants import FLUID_LIBRARY, FluidType
     fluid = FLUID_LIBRARY.get(FluidType.RL)
     
     fluxes = PediaFlowPhysicsEngine._calculate_derivatives(state, params, fluid, 0.0)
@@ -52,7 +56,8 @@ def run_debug():
     else:
         print("\n❌ FAILURE: Calibration Mismatch.")
         if state.cvp_mmHg != 5.0:
-            print("   -> SUSPECT: The Calibration assumed CVP=5.0, but Simulation started with CVP={:.2f}".format(state.cvp_mmHg))
+            print(f"   -> SUSPECT: The Calibration assumed CVP=5.0, but Simulation started with CVP={state.cvp_mmHg:.2f}")
 
 if __name__ == "__main__":
     run_debug()
+
