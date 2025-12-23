@@ -133,13 +133,14 @@ class PatientInput:
     
     # Clinical Vitals (Snapshot at T=0)
     systolic_bp: int         # mmHg
-    diastolic_bp: Optional[int] = None # [NEW] Optional for better MAP
     heart_rate: int          # bpm
     capillary_refill_sec: int # >3s = Shock
     sp_o2_percent: int       # Oxygen Saturation
     # RESPIRATORY BASELINE
     # Required to trigger "Stop if RR increases by X"
     respiratory_rate_bpm: int
+
+    diastolic_bp: Optional[int] = None # [NEW] Optional for better MAP
     
     # Lab / Dynamic Inputs (Optional but high value)
     current_sodium: float = 140.0 # mEq/L (Critical for Cerebral Edema logic)
