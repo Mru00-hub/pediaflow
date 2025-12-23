@@ -1,4 +1,7 @@
 # main.py
+@app.get("/")
+def read_root():
+    return {"status": "active", "message": "PediaFlow API is running successfully!"}
 
 import logging
 from typing import Optional, List
