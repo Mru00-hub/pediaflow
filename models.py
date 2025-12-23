@@ -11,6 +11,7 @@ that will drive the Differential Equations.
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import List, Optional
+from constants import VERSION 
 
 class CriticalConditionError(ValueError):
     """Raised when vitals indicate immediate life threat requiring ICU, not calculation."""
