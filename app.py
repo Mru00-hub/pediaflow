@@ -336,10 +336,6 @@ class PhysiologicalParams:
     # Metabolic burn rate to predict hypoglycemia
     glucose_utilization_mg_kg_min: float 
 
-    # CONFIDENCE INTERVALS
-    # Used to widen safety margins in output
-    albumin_uncertainty_g_dl: float = 0.5 
-
     # Captures how "stiff" the vessels are (SAM/Cold = High Sensitivity)
     afterload_sensitivity: float 
     
@@ -351,6 +347,10 @@ class PhysiologicalParams:
 
     weight_kg: float  # Required for glucose metabolic burn calculation
     interstitial_compliance_ml_mmhg: float # Replaces magic number 100.0
+
+    # CONFIDENCE INTERVALS
+    # Used to widen safety margins in output
+    albumin_uncertainty_g_dl: float = 0.5 
 
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
