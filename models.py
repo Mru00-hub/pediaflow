@@ -26,21 +26,6 @@ class IVSetType(Enum):
     """Values represent drops per mL (gtt/mL)"""
     MICRO_DRIP = 60  
     MACRO_DRIP = 20  
-    
-class AGE_CONSTANTS:
-    # Age (months): (Min RR, Max RR)
-    RR_LIMITS = {0: (30,100), 12: (20,80), 60: (15,60), 216: (10,50)}
-
-class PHYSICS_CONSTANTS:
-    MINUTES_PER_DAY = 1440.0
-    NEONATE_RENAL_MATURITY_BASE = 0.3
-    RENAL_MATURATION_RATE_PER_MONTH = 0.029 # (1.0 - 0.3) / 24 months
-    
-    # Compartment Ratios
-    NEONATE_TBW = 0.80
-    INFANT_TBW = 0.70
-    CHILD_TBW = 0.60
-    SAM_HYDRATION_OFFSET = 0.05 # +5% water for SAM
 
 class ClinicalDiagnosis(Enum):
     SEVERE_DEHYDRATION = "severe_dehydration" # Diarrhea/Vomiting
@@ -442,3 +427,14 @@ class EngineOutput:
     # [NEW] Summary for Quick Read
     human_readable_summary: str = "" 
     # e.g. "Give 100ml RL over 1 hr. Stop if RR > 55."
+
+@dataclass
+class FluidProperties:
+    name: str
+    sodium_meq_l: float
+    glucose_g_l: float
+    oncotic_pressure_mmhg: float  # The "Pull" force
+    vol_distribution_intravascular: float  # How much stays in veins immediately?
+    
+    # Critical for specific logic
+    is_colloid: bool = False
