@@ -1,7 +1,4 @@
 # main.py
-@app.get("/")
-def read_root():
-    return {"status": "active", "message": "PediaFlow API is running successfully!"}
 
 import logging
 from typing import Optional, List
@@ -39,6 +36,15 @@ app.add_middleware(
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def read_root():
+    return {"status": "active", "message": "PediaFlow API is running successfully!"}
+
+@app.get("/health")
+def health_check():
+    """K8s/AWS Health Probe"""
+    return {"status": "active", "version": "1.0.0", "module": "pediaflow-kinetic-engine"}
 
 # --- 2. STRICT INPUT SCHEMA (The Guardrails) ---
 class PatientRequest(BaseModel):
