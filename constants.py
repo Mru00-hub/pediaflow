@@ -54,6 +54,16 @@ class FLUID_LIBRARY:
             sodium_meq_l=154, glucose_g_l=0, oncotic_pressure_mmhg=0, 
             vol_distribution_intravascular=0.25
         ),
+        FluidType.HALF_STRENGTH: FluidProperties(
+            name="0.45% Normal Saline",
+            sodium_meq_l=77, glucose_g_l=0, oncotic_pressure_mmhg=0,
+            vol_distribution_intravascular=0.15 # Leaks faster than NS
+        ),
+        FluidType.RESOMAL: FluidProperties(
+            name="ReSoMal",
+            sodium_meq_l=45, glucose_g_l=25, oncotic_pressure_mmhg=0,
+            vol_distribution_intravascular=0.20
+        ),
         FluidType.D5_NS: FluidProperties(
             name="D5 Normal Saline", 
             sodium_meq_l=154, glucose_g_l=50, oncotic_pressure_mmhg=0, 
@@ -70,6 +80,11 @@ class FLUID_LIBRARY:
             sodium_meq_l=140, glucose_g_l=0, oncotic_pressure_mmhg=25.0,
             vol_distribution_intravascular=1.0,
             is_colloid=True
+        ),
+        FluidType.ORS_SOLUTION: FluidProperties(
+            name="Oral Rehydration Solution",
+            sodium_meq_l=75, glucose_g_l=13.5, oncotic_pressure_mmhg=0,
+            vol_distribution_intravascular=0.20 
         )
     }
 
