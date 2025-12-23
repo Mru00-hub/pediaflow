@@ -68,20 +68,21 @@ class TestClinicalScenarios(unittest.TestCase):
     def test_02_sam_heart_failure(self):
         """
         SCENARIO: Does a SAM child develop edema faster?
-        We stress-test a SAM child vs Normal child with a high volume load.
+        FIX: We start with WELL-HYDRATED patients to test overfill compliance immediately.
         """
         print("\nCLINICAL TEST 2: SAM Fragility (Edema Risk)")
         
-        # Patient A: Normal Nutrition
-        data_normal = self.create_base_patient(ClinicalDiagnosis.SEVERE_DEHYDRATION, weight=10, muac=15)
+        # Patient A: Normal Nutrition, Well Hydrated (Diagnosis=Unknown -> No Deficit)
+        data_normal = self.create_base_patient(ClinicalDiagnosis.UNKNOWN, weight=10, muac=15)
         twin_normal = PediaFlowPhysicsEngine.create_digital_twin(data_normal)
         
-        # Patient B: SAM (Severe Malnutrition)
-        data_sam = self.create_base_patient(ClinicalDiagnosis.SAM_DEHYDRATION, weight=10, muac=10.5)
+        # Patient B: SAM, Well Hydrated (Diagnosis=Unknown -> No Deficit)
+        data_sam = self.create_base_patient(ClinicalDiagnosis.UNKNOWN, weight=10, muac=10.5)
         twin_sam = PediaFlowPhysicsEngine.create_digital_twin(data_sam)
         
-        # Stress Test: Give Aggressive Fluid (40ml/kg in 1 hour) - Not recommended but good for testing limits
-        vol = 400; duration = 60
+        # Give Aggressive Fluid Challenge (20ml/kg in 20 mins)
+        # Since they start full, this goes straight to overload
+        vol = 200; duration = 20
         
         res_normal = PediaFlowPhysicsEngine.run_simulation(
             twin_normal.initial_state, twin_normal.physics_params, FluidType.RL, vol, duration
@@ -96,15 +97,9 @@ class TestClinicalScenarios(unittest.TestCase):
         print(f"Normal Lung Pressure: {p_inter_normal:.2f} mmHg")
         print(f"SAM Lung Pressure:    {p_inter_sam:.2f} mmHg")
         
-        # SAM child should have much higher interstitial pressure (stiff compliance + leaky)
-        self.assertTrue(p_inter_sam > p_inter_normal, "SAM patient handled fluid too well (Physics Engine too generous)")
-        
-        # SAM child should likely trigger the Pulmonary Edema alarm
-        sam_triggers = str(res_sam['triggers'])
-        if "Pulmonary Edema" in sam_triggers:
-            print(">> CORRECT: SAM Engine triggered Safety Stop.")
-        else:
-            print(f">> WARNING: SAM Engine did NOT stop. Triggers: {sam_triggers}")
+        # SAM child has compliance=50, Normal=100.
+        # So SAM pressure should rise roughly 2x faster for the same volume excess.
+        self.assertTrue(p_inter_sam > p_inter_normal, "SAM patient did not develop higher pressure than normal patient")
 
     def test_03_renal_shutdown(self):
         """
