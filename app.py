@@ -447,11 +447,11 @@ class EngineOutput:
     max_safe_infusion_rate_ml_hr: int  # e.g., "Do not exceed 40ml/hr"
     max_allowed_bolus_volume_ml: int   # e.g., "Stop after 150ml"
     
+    alerts: SafetyAlerts
+    
     # FLUID SELECTION LOGIC
     requires_glucose: bool = False     # True if SAM/Hypoglycemia risk
     requires_blood: bool = False       # True if Anemia/Hb thresholds met
-    
-    alerts: SafetyAlerts
 
     # [NEW] Summary for Quick Read
     human_readable_summary: str = "" 
