@@ -428,14 +428,3 @@ class EngineOutput:
     # [NEW] Summary for Quick Read
     human_readable_summary: str = "" 
     # e.g. "Give 100ml RL over 1 hr. Stop if RR > 55."
-
-@dataclass
-class FluidProperties:
-    name: str
-    sodium_meq_l: float
-    glucose_g_l: float
-    oncotic_pressure_mmhg: float  # The "Pull" force
-    vol_distribution_intravascular: float  # How much stays in veins immediately?
-    
-    # Critical for specific logic
-    is_colloid: bool = False
