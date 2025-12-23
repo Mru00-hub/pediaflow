@@ -1,8 +1,13 @@
 import unittest
-from app import (
-    PediaFlowPhysicsEngine, PatientInput, ClinicalDiagnosis, 
-    FluidType, SimulationState, PhysiologicalParams, CalculationWarnings
+from core_physics import PediaFlowPhysicsEngine
+from models import (
+    PatientInput, 
+    ClinicalDiagnosis, 
+    SimulationState, 
+    PhysiologicalParams, 
+    CalculationWarnings
 )
+from constants import FluidType
 
 class TestPediaFlowEngine(unittest.TestCase):
 
