@@ -348,6 +348,9 @@ class PhysiologicalParams:
     # Captures the "Sweet Spot" volume for this specific child's heart
     optimal_preload_ml: float 
 
+    weight_kg: float  # Required for glucose metabolic burn calculation
+    interstitial_compliance_ml_mmhg: float # Replaces magic number 100.0
+
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
 @dataclass
@@ -852,7 +855,14 @@ class PediaFlowPhysicsEngine:
         afterload_sens = 1.0
         if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
             afterload_sens = 1.5
-            
+
+        # Interstitial Compliance (Stiffer in SAM = faster edema)
+        # Replaces the magic number logic
+        interstitial_compliance = 50.0 if input.muac_cm < 11.5 else 100.0
+
+        # Previous Phase 2 logic glue
+        afterload_sens = 1.5 if (input.muac_cm < 11.5 or input.temp_celsius < 36.0) else 1.0
+        
         # 2. Calculate Baseline Capillary Pressure
         # Normal = 25 mmHg. 
         # Deep Shock = 15 mmHg (shut down). Compensated = 20 mmHg.
@@ -897,6 +907,8 @@ class PediaFlowPhysicsEngine:
             reflection_coefficient_sigma=sigma,
             glucose_utilization_mg_kg_min=glucose_burn,
             albumin_uncertainty_g_dl=albumin_uncertainty,
+            weight_kg=input.weight_kg,
+            interstitial_compliance_ml_mmhg=interstitial_compliance,
             afterload_sensitivity=afterload_sens,
             baseline_capillary_pressure_mmhg=base_pc,
             optimal_preload_ml=opt_preload
@@ -1039,8 +1051,7 @@ class PediaFlowPhysicsEngine:
         derived_map = max(30.0, min(derived_map, 160.0)) # Safety Clamp
 
         # --- 3. STARLING FORCES (Capillary Leak) ---
-        # Update Pc (Capillary Pressure) based on new MAP
-        # In shock, P_cap drops -> less leak. In fluid overload, P_cap rises -> more leak.
+        # Scale Pc relative to baseline state
         p_capillary = params.baseline_capillary_pressure_mmhg * (derived_map / params.target_map_mmhg)
         
         # Dynamic Oncotic Pressure (Dilution Effect)
@@ -1052,15 +1063,22 @@ class PediaFlowPhysicsEngine:
         hydrostatic_net = p_capillary - state.p_interstitial_mmHg
         oncotic_net = params.reflection_coefficient_sigma * (current_pi_c - 5.0)
         
-        q_leak = params.capillary_filtration_k * (hydrostatic_net - oncotic_net)
+        # Colloid Leak Adjustment
+        effective_kf = params.capillary_filtration_k
+        # If septic/dengue (sigma < 0.6) and using colloid, it still leaks but slower
+        if current_fluid.is_colloid and params.reflection_coefficient_sigma < 0.6:
+            effective_kf *= 0.5 
+
+        q_leak = effective_kf * (hydrostatic_net - oncotic_net)
         q_leak = max(0.0, q_leak) # Fluid rarely flows back via capillaries alone
 
         # --- 4. RENAL & LYMPHATIC ---
         # Lymph increases with tissue pressure
         q_lymph = 0.0
         if state.p_interstitial_mmHg > -2.0:
-            # Ramps up as edema forms
-            q_lymph = params.lymphatic_drainage_capacity_ml_min * (state.p_interstitial_mmHg + 2.0)
+            # Cap drive at 2x baseline to prevent infinite drainage
+            lymph_drive = min((state.p_interstitial_mmHg + 2.0) / 3.0, 2.0)
+            q_lymph = params.lymphatic_drainage_capacity_ml_min * max(0.5, lymph_drive)
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
@@ -1069,25 +1087,37 @@ class PediaFlowPhysicsEngine:
         else:
             q_urine = (perfusion_p - 35) * 0.05 * params.renal_maturity_factor
 
-        # --- 5. OSMOTIC SHIFT (Sodium Dynamics) ---
-        # Critical for cerebral edema logic
-        # If infusing Hypotonic (D5W) -> Water moves to cells
-        # If infusing Hypertonic (NS/3% Saline) -> Water moves to blood
+        # OSMOTIC SHIFT (Bidirectional)
+        # Handles Hypertonic (water OUT) and Hypotonic (water IN)
+        ecf_volume_l = state.v_blood_current_l + state.v_interstitial_current_l
+        q_osmotic = 0.0
         
-        osmotic_drive = 0.0
-        # If fluid has glucose, it provides free water after metabolism
-        if current_fluid.glucose_g_l > 0:
-            osmotic_drive += (infusion_rate_ml_min * 0.5) 
+        if infusion_rate_ml_min > 0 and ecf_volume_l > 0:
+            # Na influx rate
+            na_flux_meq_min = (infusion_rate_ml_min / 1000.0) * current_fluid.sodium_meq_l
+            # Concentration change rate in ECF (simplified)
+            na_change_rate = na_flux_meq_min / ecf_volume_l
             
-        # If fluid Sodium < 135 (e.g. half-strength saline), water moves to cells
-        if current_fluid.sodium_meq_l < 135:
-            osmotic_drive += (infusion_rate_ml_min * 0.1)
+            # Osmotic bias: If Na is added slower than baseline tonicity (approx 0.1 meq/L/min threshold), cells swell
+            # Positive gradient = Water INTO cells. Negative = Water OUT of cells.
+            # We compare against a stable baseline (e.g. 140/TBW roughly) or simply the fluid tonicity vs plasma.
+            
+            # Simpler approach: Compare fluid Na to Plasma Na (assumed 140)
+            tonic_diff = 140.0 - current_fluid.sodium_meq_l
+            # If Fluid is 154 (NS), Diff is -14 (Hypertonic) -> Drive is negative -> Water out of cells
+            # If Fluid is 0 (D5), Diff is 140 (Hypotonic) -> Drive is positive -> Water into cells
+            
+            q_osmotic = (infusion_rate_ml_min / 1000.0) * tonic_diff * params.osmotic_conductance_k * params.intracellular_sodium_bias
+            
+            # Add Glucose Effect (Metabolizes to free water -> into cells)
+            if current_fluid.glucose_g_l > 0:
+                q_osmotic += (infusion_rate_ml_min * 0.5) 
 
         return {
             "q_leak": q_leak,
             "q_urine": q_urine,
             "q_lymph": q_lymph,
-            "q_osmotic": osmotic_drive,
+            "q_osmotic": q_osmotic,
             "derived_map": derived_map,
             "derived_cvp": state.cvp_mmHg # CVP is updated in integration step
         }
@@ -1140,32 +1170,37 @@ class PediaFlowPhysicsEngine:
         # Interstitial Pressure (Only rises if edema present)
         inter_excess = (new_v_inter - params.v_inter_normal_l) * 1000
         if inter_excess > 0:
-            # Stiff tissue compliance (rapid rise in pressure = compartment syndrome risk)
-            new_p_inter = inter_excess / (params.tissue_compliance_factor * 100.0)
+            # Use the calculated compliance parameter instead of * 100.0
+            new_p_inter = inter_excess / params.interstitial_compliance_ml_mmhg
         else:
-            new_p_inter = -2.0 # Normal suction
+            new_p_inter = -2.0
 
         # 4. Update Safety Trackers
         new_total_vol = state.total_volume_infused_ml + (rate_min * dt_minutes)
         new_sodium_load = state.total_sodium_load_meq + ((rate_min/1000) * fluid_props.sodium_meq_l * dt_minutes)
 
+        # Hematocrit (Dilution)
+        # Prevent division by zero if new_v_blood is impossibly low
+        safe_v_blood = max(new_v_blood, 0.1)
+        new_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / safe_v_blood
+        new_hct = max(5.0, min(new_hct, 70.0))
+                                 
         # --- GLUCOSE DYNAMICS ---
-        # 1. Supply: How much glucose is in the fluid? (e.g., D5 = 50g/L = 50,000mg/L)
-        glucose_concentration_mg_l = fluid_props.glucose_g_l * 1000.0
-        glucose_in_mg = (rate_min / 1000.0) * glucose_concentration_mg_l * dt_minutes
         
+        # 1. Supply: How much glucose is in the fluid? (e.g., D5 = 50g/L = 50,000mg/L)
+        glucose_conc_mg_l = FLUID_LIBRARY.get(fluid_type).glucose_g_l * 1000.0
+        glucose_in_mg = (infusion_rate_ml_hr / 60.0) * glucose_conc_mg_l * dt_minutes
+
         # 2. Demand: Metabolic Burn Rate (mg/min)
         glucose_burn_mg = (params.glucose_utilization_mg_kg_min * params.weight_kg) * dt_minutes
         
-        # 3. Net Change in Total Glucose Mass
-        net_glucose_mg = glucose_in_mg - glucose_burn_mg
-        
-        # 4. Convert Mass Change to Concentration Change (mg/dL)
-        # Distributed in ECF (Blood + Interstitial)
-        ecf_volume_deciliters = (new_v_blood + new_v_inter) * 10.0
-        
-        new_glucose = state.current_glucose_mg_dl + (net_glucose_mg / ecf_volume_deciliters)
-        new_glucose = max(10.0, min(new_glucose, 800.0)) # Clamp
+        ecf_vol_dl = (new_v_blood + new_v_inter) * 10.0
+        if ecf_vol_dl > 0:
+            new_glucose = state.current_glucose_mg_dl + ((glucose_in_mg - glucose_burn_mg) / ecf_vol_dl)
+        else:
+            new_glucose = state.current_glucose_mg_dl
+            
+        new_glucose = max(10.0, min(new_glucose, 800.0))
 
         return SimulationState(
             time_minutes=state.time_minutes + dt_minutes,
@@ -1189,18 +1224,13 @@ class PediaFlowPhysicsEngine:
             total_volume_infused_ml=new_total_vol,
             total_sodium_load_meq=new_sodium_load,
             
-            # Conservation of Red Cell Mass: (Vol_Old * Hct_Old) = (Vol_New * Hct_New)
-            # Therefore: Hct_New = (Vol_Old * Hct_Old) / Vol_New
-            # We use the Blood Volume (V_blood) for this calculation
-            new_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / new_v_blood
-            # Clamp to physiological limits (Prevent crash if volume is weird)
-            new_hct = max(5.0, min(new_hct, 70.0))
+            current_hematocrit_dynamic=new_hct,
             current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
+            current_glucose_mg_dl=new_glucose,
             
             # Pass-throughs
             q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
             q_insensible_loss_ml_min=state.q_insensible_loss_ml_min,
-            current_glucose_mg_dl=state.current_glucose_mg_dl,
             cumulative_bolus_count=state.cumulative_bolus_count,
             time_since_last_bolus_min=state.time_since_last_bolus_min + dt_minutes
         )
@@ -1246,14 +1276,18 @@ class PediaFlowPhysicsEngine:
                  # Don't abort, just warn
                  
             # 3. Hemodilution Safety
-            # Calculate Hct Drop
-            dilution = params.v_blood_normal_l / current_state.v_blood_current_l
-            pred_hct = current_state.current_hematocrit_dynamic * dilution
-            if pred_hct < 20.0:
+            # We just check the value directly because the engine already updated it.
+            if current_state.current_hematocrit_dynamic < 20.0:
                  triggers.append("CRITICAL: Hemodilution (Hct < 20). Need Blood.")
                  aborted = True
                  break
 
+            # Reassessment Trigger
+            # If infused > 10ml/kg (approx one bolus) and haven't flagged yet
+            bolus_threshold_vol = params.weight_kg * 10.0
+            if current_state.total_volume_infused_ml >= bolus_threshold_vol and current_state.cumulative_bolus_count == 0:
+                triggers.append(f"REASSESS: 10ml/kg ({int(bolus_threshold_vol)}ml) delivered. Check Vitals/Liver Span.")
+                
         return {
             "final_state": current_state,
             "success": not aborted,
