@@ -5,6 +5,7 @@ from models import (
 from core_physics import PediaFlowPhysicsEngine
 from protocols import FluidSelector, PrescriptionEngine
 from safety import SafetySupervisor
+from constants import VERSION 
 
 # --- METADATA & COMPLIANCE ---
 __version__ = "1.0.0"
