@@ -35,10 +35,9 @@ def generate_prescription(data: dict) -> EngineOutput:
     twin: ValidationResult = PediaFlowPhysicsEngine.create_digital_twin(data)
     
     if not twin.success:
-        # In a real API, you might raise an HTTP exception here.
-        # For the engine, we propagate the error.
-        raise ValueError(f"Digital Twin Creation Failed: {twin.errors}")
-
+        # Robust Error: Return the first error message clearly
+        raise ValueError(f"Input Validation Error: {twin.errors[0] if twin.errors else 'Unknown'}")
+        
     # 2. Select Fluid
     # Uses IAP/WHO logic (e.g. Sepsis -> RL, Hypoglycemia -> D5)
     fluid = FluidSelector.select_initial_fluid(twin.patient, twin.initial_state)
@@ -59,6 +58,13 @@ def generate_prescription(data: dict) -> EngineOutput:
     alerts = SafetySupervisor.check_real_time(
         sim_res['final_state'], twin.physics_params, twin.patient
     )
+
+    # Merge simulation triggers (like Pulmonary Edema stop) into alerts
+    for trigger in sim_res['triggers']:
+        if "Pulmonary" in trigger:
+            alerts.risk_pulmonary_edema = True
+        if "Hemodilution" in trigger:
+            alerts.anemia_dilution_warning = True
     
     # 6. Construct Human Readable Summary
     summary = (
