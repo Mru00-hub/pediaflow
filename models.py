@@ -40,16 +40,6 @@ class ShockSeverity(Enum):
     HYPOTENSIVE = "decompensated_shock"   # BP Low
     IRREVERSIBLE = "irreversible_shock"   # Organ Failure
 
-class FluidType(Enum):
-    RL = "ringer_lactate"
-    NS = "normal_saline_0.9"
-    D5_NS = "dextrose_5_normal_saline"      # For Hypoglycemia Risk
-    RESOMAL = "resomal_rehydration_sol"     # For SAM
-    PRBC = "packed_red_blood_cells"         # For Severe Anemia
-    HALF_STRENGTH = "0.45_normal_saline"    # Maintenance
-    COLLOID_ALBUMIN = "albumin_5_percent" # REQUIRED: For Refractory Dengue/Sepsis
-    ORS_SOLUTION = "oral_rehydration_solution" # REQUIRED: For bridging IV to Oral
-
 class OngoingLosses(Enum):
     NONE = 0
     MILD = 5      # 5 ml/kg/hr
