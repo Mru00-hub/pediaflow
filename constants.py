@@ -1,5 +1,5 @@
-VERSION = "1.0.0"  
 from models import FluidType, FluidProperties
+VERSION = "1.0.0"  
 
 class AGE_CONSTANTS:
     # Age (months): (Min RR, Max RR)
