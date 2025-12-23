@@ -1,8 +1,11 @@
 import unittest
-from app import (
-    PediaFlowPhysicsEngine, PatientInput, ClinicalDiagnosis, 
-    FluidType, OngoingLosses
+from core_physics import PediaFlowPhysicsEngine
+from models import (
+    PatientInput, 
+    ClinicalDiagnosis, 
+    OngoingLosses
 )
+from constants import FluidType
 
 class TestStressLimits(unittest.TestCase):
     
