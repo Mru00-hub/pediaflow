@@ -392,9 +392,21 @@ class PediaFlowPhysicsEngine:
         else:
             base_pc = 25.0
             
-        # 3. Calculate Optimal Preload (The Frank-Starling Peak)
-        # Usually 15% more than their normal blood volume
-        opt_preload = (vols["v_blood"] * 1000.0) * 1.15
+        # 3. Base Cardiac Output (Using EST VOLUME)
+        preload_ratio = (current_v_blood_est * 1000.0) / opt_preload
+        
+        # Standard Frank-Starling Logic (MATCHING DERIVATIVES)
+        if preload_ratio <= 1.0:
+             preload_efficiency = preload_ratio
+        elif preload_ratio <= 1.2:
+             preload_efficiency = 1.0 
+        else:
+             overstretch = preload_ratio - 1.2
+             preload_efficiency = max(0.4, 1.0 - (overstretch * 1.5))
+        
+        base_co = (
+            (input.weight_kg * 0.15) * hemo["contractility"] * preload_efficiency
+        )
 
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
@@ -592,12 +604,13 @@ class PediaFlowPhysicsEngine:
         # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
         preload_ratio = current_blood_ml / params.optimal_preload_ml
         
-        # B. Frank-Starling Curve Implementation
-        if preload_ratio < 0.5:
-             # Hypovolemic: Steep linear rise
-             preload_efficiency = preload_ratio * 2.0 
+        # B. Frank-Starling Curve Implementation 
+        # Linear rise up to 1.0 (Optimal), then plateau, then failure.
+        if preload_ratio <= 1.0:
+             # Normal ascending limb: More blood = More squeeze
+             preload_efficiency = preload_ratio 
         elif preload_ratio <= 1.2:
-             # Optimal Plateau
+             # Plateau (Optimal stretch)
              preload_efficiency = 1.0 
         else:
              # Failure: Heart is overstretched, output drops
