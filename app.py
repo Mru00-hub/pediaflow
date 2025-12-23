@@ -446,6 +446,56 @@ class EngineOutput:
 
 import math
 
+@dataclass
+class FluidProperties:
+    name: str
+    sodium_meq_l: float
+    glucose_g_l: float
+    oncotic_pressure_mmhg: float  # The "Pull" force
+    vol_distribution_intravascular: float  # How much stays in veins immediately?
+    
+    # Critical for specific logic
+    is_colloid: bool = False
+
+class FLUID_LIBRARY:
+    """
+    The Pharmacopoeia of Fluids. 
+    Defines how different fluids behave physically.
+    """
+    SPECS = {
+        FluidType.RL: FluidProperties(
+            name="Ringer Lactate", 
+            sodium_meq_l=130, glucose_g_l=0, oncotic_pressure_mmhg=0, 
+            vol_distribution_intravascular=0.25 # Crystalloid: 1/4 stays, 3/4 leaks
+        ),
+        FluidType.NS: FluidProperties(
+            name="Normal Saline", 
+            sodium_meq_l=154, glucose_g_l=0, oncotic_pressure_mmhg=0, 
+            vol_distribution_intravascular=0.25
+        ),
+        FluidType.D5_NS: FluidProperties(
+            name="D5 Normal Saline", 
+            sodium_meq_l=154, glucose_g_l=50, oncotic_pressure_mmhg=0, 
+            vol_distribution_intravascular=0.20 # Glucose metabolizes -> free water -> cells
+        ),
+        FluidType.COLLOID_ALBUMIN: FluidProperties(
+            name="Albumin 5%", 
+            sodium_meq_l=145, glucose_g_l=0, oncotic_pressure_mmhg=20.0, # High Pull
+            vol_distribution_intravascular=1.0, # Stays in vessel
+            is_colloid=True
+        ),
+        FluidType.PRBC: FluidProperties(
+            name="Packed Red Blood Cells",
+            sodium_meq_l=140, glucose_g_l=0, oncotic_pressure_mmhg=25.0,
+            vol_distribution_intravascular=1.0,
+            is_colloid=True
+        )
+    }
+
+    @staticmethod
+    def get(fluid_enum: FluidType) -> FluidProperties:
+        return FLUID_LIBRARY.SPECS.get(fluid_enum, FLUID_LIBRARY.SPECS[FluidType.RL])
+
 class PediaFlowPhysicsEngine:
     """
     The Mathematical Core.
@@ -906,3 +956,252 @@ class PediaFlowPhysicsEngine:
             cumulative_bolus_count=0,
             time_since_last_bolus_min=999.0 # Arbitrary high number
         )
+
+    @staticmethod
+    def _calculate_derivatives(state: SimulationState, 
+                               params: PhysiologicalParams, 
+                               current_fluid: FluidProperties,
+                               infusion_rate_ml_min: float) -> dict:
+        """
+        CALCULATES FLUXES (The Physics Core).
+        Now includes 'Smart' Frank-Starling and Sodium logic.
+        """
+        
+        # --- 1. ADVANCED HEMODYNAMICS (Frank-Starling Curve) ---
+        # Instead of linear increase, we use a curve:
+        # Volume -> Stretch -> Output (until heart is overstretched)
+        
+        # A. Preload (Stretch)
+        current_blood_ml = state.v_blood_current_l * 1000.0
+        # Optimal preload is roughly 10-15% above normal blood volume
+        optimal_preload_ml = params.v_blood_normal_l * 1000.0 * 1.15
+        
+        # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
+        preload_ratio = current_blood_ml / optimal_preload_ml
+        
+        # B. Frank-Starling Curve Implementation
+        if preload_ratio < 0.5:
+             # Hypovolemic: Steep linear rise
+             preload_efficiency = preload_ratio * 2.0 
+        elif preload_ratio <= 1.2:
+             # Optimal Plateau
+             preload_efficiency = 1.0 
+        else:
+             # Failure: Heart is overstretched, output drops
+             overstretch = preload_ratio - 1.2
+             preload_efficiency = max(0.4, 1.0 - (overstretch * 1.5))
+
+        # C. Afterload Penalty (SVR opposing flow)
+        # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
+        normalized_svr = params.svr_resistance / 1000.0
+        afterload_factor = 1.0 / (0.5 + (normalized_svr * 0.5)) 
+
+        # D. Resulting Cardiac Output (L/min)
+        co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
+
+        # --- 2. PRESSURE DERIVATION ---
+        # MAP = (CO * SVR) + CVP
+        # Factor 80 converts flow/resistance units to mmHg roughly
+        derived_map = (co_l_min * params.svr_resistance / 80.0) + state.cvp_mmHg
+        derived_map = max(30.0, min(derived_map, 160.0)) # Safety Clamp
+
+        # --- 3. STARLING FORCES (Capillary Leak) ---
+        # Update Pc (Capillary Pressure) based on new MAP
+        # In shock, P_cap drops -> less leak. In fluid overload, P_cap rises -> more leak.
+        p_capillary = (derived_map * 0.25) + (state.cvp_mmHg * 0.75)
+        
+        # Dynamic Oncotic Pressure (Dilution Effect)
+        dilution = params.v_blood_normal_l / state.v_blood_current_l
+        current_pi_c = params.plasma_oncotic_pressure_mmhg * dilution
+        if current_fluid.is_colloid: current_pi_c += 2.0 # Colloid boost
+
+        # The Equation: Jv = Kf * [(Pc - Pi) - sigma(Pic - Pii)]
+        hydrostatic_net = p_capillary - state.p_interstitial_mmHg
+        oncotic_net = params.reflection_coefficient_sigma * (current_pi_c - 5.0)
+        
+        q_leak = params.capillary_filtration_k * (hydrostatic_net - oncotic_net)
+        q_leak = max(0.0, q_leak) # Fluid rarely flows back via capillaries alone
+
+        # --- 4. RENAL & LYMPHATIC ---
+        # Lymph increases with tissue pressure
+        q_lymph = 0.0
+        if state.p_interstitial_mmHg > -2.0:
+            # Ramps up as edema forms
+            q_lymph = params.lymphatic_drainage_capacity_ml_min * (state.p_interstitial_mmHg + 2.0)
+
+        # Urine (Linear approximation based on perfusion)
+        perfusion_p = derived_map - state.cvp_mmHg
+        if perfusion_p < 35:
+            q_urine = 0.0
+        else:
+            q_urine = (perfusion_p - 35) * 0.05 * params.renal_maturity_factor
+
+        # --- 5. OSMOTIC SHIFT (Sodium Dynamics) ---
+        # Critical for cerebral edema logic
+        # If infusing Hypotonic (D5W) -> Water moves to cells
+        # If infusing Hypertonic (NS/3% Saline) -> Water moves to blood
+        
+        osmotic_drive = 0.0
+        # If fluid has glucose, it provides free water after metabolism
+        if current_fluid.glucose_g_l > 0:
+            osmotic_drive += (infusion_rate_ml_min * 0.5) 
+            
+        # If fluid Sodium < 135 (e.g. half-strength saline), water moves to cells
+        if current_fluid.sodium_meq_l < 135:
+            osmotic_drive += (infusion_rate_ml_min * 0.1)
+
+        return {
+            "q_leak": q_leak,
+            "q_urine": q_urine,
+            "q_lymph": q_lymph,
+            "q_osmotic": osmotic_drive,
+            "derived_map": derived_map,
+            "derived_cvp": state.cvp_mmHg # CVP is updated in integration step
+        }
+
+    @staticmethod
+    def simulate_single_step(state: SimulationState, 
+                             params: PhysiologicalParams, 
+                             infusion_rate_ml_hr: float, 
+                             fluid_type: FluidType,
+                             dt_minutes: float = 1.0) -> SimulationState:
+        """
+        THE INTEGRATOR.
+        Applies fluxes to volumes over time dt.
+        """
+        fluid_props = FLUID_LIBRARY.get(fluid_type)
+        rate_min = infusion_rate_ml_hr / 60.0
+        
+        # 1. Get Instantaneous Fluxes
+        fluxes = PediaFlowPhysicsEngine._calculate_derivatives(state, params, fluid_props, rate_min)
+        
+        # 2. Update Volumes (Mass Balance)
+        # Blood gains infusion (vascular portion) + lymph, loses leak + urine
+        vol_dist = fluid_props.vol_distribution_intravascular
+        dv_blood = ((rate_min * vol_dist) - fluxes['q_leak'] - fluxes['q_urine'] + fluxes['q_lymph']) * dt_minutes
+        
+        # Subtract ongoing pathological losses (diarrhea/bleeding)
+        dv_blood -= (state.q_ongoing_loss_ml_min * 0.25) * dt_minutes
+
+        new_v_blood = state.v_blood_current_l + (dv_blood / 1000.0)
+        
+        # Interstitial gains leak + free water (if any), loses lymph
+        dv_inter = (fluxes['q_leak'] - fluxes['q_lymph'] + (rate_min * (1-vol_dist))) * dt_minutes
+        dv_inter -= (state.q_ongoing_loss_ml_min * 0.75) * dt_minutes # Diarrhea comes mostly from here
+        dv_inter -= state.q_insensible_loss_ml_min * dt_minutes # Sweat/Breathing
+        # Adjust for osmotic shift (water moving to cells)
+        dv_inter -= fluxes['q_osmotic'] * dt_minutes
+
+        new_v_inter = state.v_interstitial_current_l + (dv_inter / 1000.0)
+
+        # Intracellular gains osmotic shift
+        dv_icf = fluxes['q_osmotic'] * dt_minutes
+        new_v_icf = state.v_intracellular_current_l + (dv_icf / 1000.0)
+
+        # 3. Update Pressures (Compliance Logic)
+        # CVP (Veins are compliant but stiffen when full)
+        vol_excess = (new_v_blood - params.v_blood_normal_l) * 1000
+        new_cvp = 3.0 + (vol_excess / params.venous_compliance_ml_mmhg)
+        new_cvp = max(1.0, min(new_cvp, 25.0))
+
+        # Interstitial Pressure (Only rises if edema present)
+        inter_excess = (new_v_inter - params.v_inter_normal_l) * 1000
+        if inter_excess > 0:
+            # Stiff tissue compliance (rapid rise in pressure = compartment syndrome risk)
+            new_p_inter = inter_excess / (params.tissue_compliance_factor * 100.0)
+        else:
+            new_p_inter = -2.0 # Normal suction
+
+        # 4. Update Safety Trackers
+        new_total_vol = state.total_volume_infused_ml + (rate_min * dt_minutes)
+        new_sodium_load = state.total_sodium_load_meq + ((rate_min/1000) * fluid_props.sodium_meq_l * dt_minutes)
+
+        return SimulationState(
+            time_minutes=state.time_minutes + dt_minutes,
+            v_blood_current_l=new_v_blood,
+            v_interstitial_current_l=new_v_inter,
+            v_intracellular_current_l=new_v_icf,
+            
+            # Note: MAP is derived in the NEXT step's flux calculation, 
+            # but we update it here for the UI to see the result of this step.
+            map_mmHg=fluxes['derived_map'], 
+            cvp_mmHg=new_cvp,
+            pcwp_mmHg=new_cvp * 1.2, 
+            p_interstitial_mmHg=new_p_inter,
+            
+            q_infusion_ml_min=rate_min,
+            q_leak_ml_min=fluxes['q_leak'],
+            q_urine_ml_min=fluxes['q_urine'],
+            q_lymph_ml_min=fluxes['q_lymph'],
+            q_osmotic_shift_ml_min=fluxes['q_osmotic'],
+            
+            total_volume_infused_ml=new_total_vol,
+            total_sodium_load_meq=new_sodium_load,
+            
+            current_hematocrit_dynamic=state.current_hematocrit_dynamic, # Todo: Update with dilution logic
+            current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
+            
+            # Pass-throughs
+            q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
+            q_insensible_loss_ml_min=state.q_insensible_loss_ml_min,
+            current_glucose_mg_dl=state.current_glucose_mg_dl,
+            cumulative_bolus_count=state.cumulative_bolus_count,
+            time_since_last_bolus_min=state.time_since_last_bolus_min + dt_minutes
+        )
+
+    @staticmethod
+    def run_simulation(initial_state: SimulationState, 
+                       params: PhysiologicalParams, 
+                       fluid: FluidType, 
+                       volume_ml: int, 
+                       duration_min: int) -> dict:
+        """
+        PREDICTIVE ENGINE:
+        Fast-forwards time to see what happens if we give this fluid.
+        Returns the final state and any safety triggers.
+        """
+        
+        current_state = initial_state
+        rate_ml_hr = (volume_ml / duration_min) * 60
+        
+        # Safety Flags
+        triggers = []
+        aborted = False
+        
+        # SIMULATION LOOP
+        for t in range(int(duration_min)):
+            current_state = PediaFlowPhysicsEngine.simulate_single_step(
+                current_state, params, rate_ml_hr, fluid, dt_minutes=1.0
+            )
+            
+            # --- SAFETY SUPERVISOR CHECKS ---
+            
+            # 1. Pulmonary Edema Check (Rapid rise in PCWP or Interstitial Vol)
+            # If lung fluid increases by > 10% in short time
+            if current_state.p_interstitial_mmHg > 5.0:
+                 triggers.append("STOP: Pulmonary Edema Risk (Crackles predicted)")
+                 aborted = True
+                 break
+            
+            # 2. Volume Overload (Total volume > 40ml/kg in shock)
+            safe_limit_ml = params.v_blood_normal_l * 1000 * 0.8 # Rough estimate
+            if current_state.total_volume_infused_ml > safe_limit_ml:
+                 triggers.append(f"WARNING: Total Volume > {int(safe_limit_ml)}ml. Re-assess.")
+                 # Don't abort, just warn
+                 
+            # 3. Hemodilution Safety
+            # Calculate Hct Drop
+            dilution = params.v_blood_normal_l / current_state.v_blood_current_l
+            pred_hct = current_state.current_hematocrit_dynamic * dilution
+            if pred_hct < 20.0:
+                 triggers.append("CRITICAL: Hemodilution (Hct < 20). Need Blood.")
+                 aborted = True
+                 break
+
+        return {
+            "final_state": current_state,
+            "success": not aborted,
+            "triggers": triggers,
+            "predicted_map_rise": int(current_state.map_mmHg - initial_state.map_mmHg),
+            "fluid_leaked_percentage": int((current_state.q_leak_ml_min / (rate_ml_hr/60))*100) if rate_ml_hr > 0 else 0
+        }
