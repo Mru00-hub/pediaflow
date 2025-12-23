@@ -339,6 +339,15 @@ class PhysiologicalParams:
     # Used to widen safety margins in output
     albumin_uncertainty_g_dl: float = 0.5 
 
+    # Captures how "stiff" the vessels are (SAM/Cold = High Sensitivity)
+    afterload_sensitivity: float 
+    
+    # Captures the baseline capillary state (Shock vs Normal)
+    baseline_capillary_pressure_mmhg: float
+    
+    # Captures the "Sweet Spot" volume for this specific child's heart
+    optimal_preload_ml: float 
+
 # --- 4. DYNAMIC STATE (The Simulation Variables) ---
 
 @dataclass
@@ -837,6 +846,27 @@ class PediaFlowPhysicsEngine:
         if input.age_months < 1 and input.diagnosis in [ClinicalDiagnosis.SEPTIC_SHOCK, ClinicalDiagnosis.DENGUE_SHOCK]:
              warnings.missing_optimal_inputs.append("Neonatal Colloid Contraindication Risk")
 
+        # 1. Calculate Afterload Sensitivity
+        # Normal = 1.0. 
+        # SAM or Hypothermia (<36C) = 1.5 (Heart is very sensitive to resistance)
+        afterload_sens = 1.0
+        if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
+            afterload_sens = 1.5
+            
+        # 2. Calculate Baseline Capillary Pressure
+        # Normal = 25 mmHg. 
+        # Deep Shock = 15 mmHg (shut down). Compensated = 20 mmHg.
+        if input.capillary_refill_sec > 4:
+            base_pc = 15.0
+        elif input.capillary_refill_sec > 2:
+            base_pc = 20.0
+        else:
+            base_pc = 25.0
+            
+        # 3. Calculate Optimal Preload (The Frank-Starling Peak)
+        # Usually 15% more than their normal blood volume
+        opt_preload = (vols["v_blood"] * 1000.0) * 1.15
+
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
@@ -867,6 +897,9 @@ class PediaFlowPhysicsEngine:
             reflection_coefficient_sigma=sigma,
             glucose_utilization_mg_kg_min=glucose_burn,
             albumin_uncertainty_g_dl=albumin_uncertainty,
+            afterload_sensitivity=afterload_sens,
+            baseline_capillary_pressure_mmhg=base_pc,
+            optimal_preload_ml=opt_preload
         )
 
     @staticmethod
@@ -977,7 +1010,7 @@ class PediaFlowPhysicsEngine:
         optimal_preload_ml = params.v_blood_normal_l * 1000.0 * 1.15
         
         # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
-        preload_ratio = current_blood_ml / optimal_preload_ml
+        preload_ratio = current_blood_ml / params.optimal_preload_ml
         
         # B. Frank-Starling Curve Implementation
         if preload_ratio < 0.5:
@@ -994,7 +1027,7 @@ class PediaFlowPhysicsEngine:
         # C. Afterload Penalty (SVR opposing flow)
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
         normalized_svr = params.svr_resistance / 1000.0
-        afterload_factor = 1.0 / (0.5 + (normalized_svr * 0.5)) 
+        afterload_factor = 1.0 / (1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity) 
 
         # D. Resulting Cardiac Output (L/min)
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
@@ -1008,7 +1041,7 @@ class PediaFlowPhysicsEngine:
         # --- 3. STARLING FORCES (Capillary Leak) ---
         # Update Pc (Capillary Pressure) based on new MAP
         # In shock, P_cap drops -> less leak. In fluid overload, P_cap rises -> more leak.
-        p_capillary = (derived_map * 0.25) + (state.cvp_mmHg * 0.75)
+        p_capillary = params.baseline_capillary_pressure_mmhg * (derived_map / params.target_map_mmhg)
         
         # Dynamic Oncotic Pressure (Dilution Effect)
         dilution = params.v_blood_normal_l / state.v_blood_current_l
@@ -1116,6 +1149,24 @@ class PediaFlowPhysicsEngine:
         new_total_vol = state.total_volume_infused_ml + (rate_min * dt_minutes)
         new_sodium_load = state.total_sodium_load_meq + ((rate_min/1000) * fluid_props.sodium_meq_l * dt_minutes)
 
+        # --- GLUCOSE DYNAMICS ---
+        # 1. Supply: How much glucose is in the fluid? (e.g., D5 = 50g/L = 50,000mg/L)
+        glucose_concentration_mg_l = fluid_props.glucose_g_l * 1000.0
+        glucose_in_mg = (rate_min / 1000.0) * glucose_concentration_mg_l * dt_minutes
+        
+        # 2. Demand: Metabolic Burn Rate (mg/min)
+        glucose_burn_mg = (params.glucose_utilization_mg_kg_min * params.weight_kg) * dt_minutes
+        
+        # 3. Net Change in Total Glucose Mass
+        net_glucose_mg = glucose_in_mg - glucose_burn_mg
+        
+        # 4. Convert Mass Change to Concentration Change (mg/dL)
+        # Distributed in ECF (Blood + Interstitial)
+        ecf_volume_deciliters = (new_v_blood + new_v_inter) * 10.0
+        
+        new_glucose = state.current_glucose_mg_dl + (net_glucose_mg / ecf_volume_deciliters)
+        new_glucose = max(10.0, min(new_glucose, 800.0)) # Clamp
+
         return SimulationState(
             time_minutes=state.time_minutes + dt_minutes,
             v_blood_current_l=new_v_blood,
@@ -1138,7 +1189,12 @@ class PediaFlowPhysicsEngine:
             total_volume_infused_ml=new_total_vol,
             total_sodium_load_meq=new_sodium_load,
             
-            current_hematocrit_dynamic=state.current_hematocrit_dynamic, # Todo: Update with dilution logic
+            # Conservation of Red Cell Mass: (Vol_Old * Hct_Old) = (Vol_New * Hct_New)
+            # Therefore: Hct_New = (Vol_Old * Hct_Old) / Vol_New
+            # We use the Blood Volume (V_blood) for this calculation
+            new_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / new_v_blood
+            # Clamp to physiological limits (Prevent crash if volume is weird)
+            new_hct = max(5.0, min(new_hct, 70.0))
             current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
             
             # Pass-throughs
