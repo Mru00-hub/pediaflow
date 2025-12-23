@@ -62,7 +62,7 @@ class AuditLog:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
     action: str = "twin_creation"
     inputs_hash: int = 0
-    model_version: str = __VERSION__
+    model_version: str = VERSION
 
 @dataclass
 class ValidationResult:
