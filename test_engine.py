@@ -119,7 +119,7 @@ class TestPediaFlowEngine(unittest.TestCase):
         self.assertTrue(final_hct < 25.0, "Hematocrit did not dilute significantly")
         self.assertTrue(final_hct > 10.0, "Hematocrit dropped impossibly low")
 
-        def test_03_glucose_burn(self):
+    def test_03_glucose_burn(self):
         """
         Metabolic Check: Glucose must drop on Saline, but RISE on D5 Bolus.
         """
