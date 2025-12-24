@@ -124,6 +124,13 @@ class PrescriptionResponse(BaseModel):
     human_readable_summary: str
     generated_at: datetime = Field(default_factory=datetime.now)
 
+# 1. Define the Input for the Simulation
+class SimulationRequest(BaseModel):
+    patient: PatientRequest  # The child
+    fluid_type: str          # What you want to give (e.g. "normal_saline")
+    volume_ml: int           # How much (e.g. 500)
+    duration_min: int        # How fast (e.g. 30)
+
 # --- 4. ENDPOINTS ---
 
 @app.post("/prescribe", response_model=PrescriptionResponse)
@@ -158,6 +165,42 @@ async def get_prescription(patient: PatientRequest):
         # These are unexpected crashes
         logger.error(f"Internal Engine Failure: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal Physiological Engine Error")
+
+@app.post("/simulate")
+def simulate_outcome(request: SimulationRequest):
+    """
+    Predicts the future: 'What happens if I do X?'
+    Returns time-series data for graphing.
+    """
+    # 1. Convert API Request -> Internal Model
+    patient_data = request.patient.dict()
+    patient = PatientInput(**patient_data)
+    
+    # 2. Initialize Physics
+    warnings = CalculationWarnings()
+    params = PediaFlowPhysicsEngine.initialize_physics_engine(patient, warnings)
+    state = PediaFlowPhysicsEngine.initialize_simulation_state(patient, params)
+    
+    # 3. Run Simulation with History Enabled
+    fluid_enum = FluidType(request.fluid_type)
+    
+    result = PediaFlowPhysicsEngine.run_simulation(
+        initial_state=state,
+        params=params,
+        fluid=fluid_enum,
+        volume_ml=request.volume_ml,
+        duration_min=request.duration_min,
+        return_series=True # Tells engine to record history
+    )
+    
+    return {
+        "summary": {
+            "bp_start": int(state.map_mmHg),
+            "bp_end": int(result['final_state'].map_mmHg),
+            "safety_alerts": result['triggers']
+        },
+        "graph_data": result['trajectory'] # The JSON for your frontend charts
+    }
 
 @app.get("/health")
 def health_check():
