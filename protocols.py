@@ -74,5 +74,6 @@ class PrescriptionEngine:
             "duration_min": duration,
             "rate_ml_hr": int(rate_ml_hr), 
             "drops_per_min": int(drops_per_min),
+            "readable_drops": readable_drops,
             "seconds_per_drop": round(sec_per_drop, 2) 
         }
