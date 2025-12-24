@@ -82,6 +82,7 @@ def generate_prescription(data: dict) -> EngineOutput:
         final_drops = 10 # Approx 1 drop every 6 seconds
     else:
         # STANDARD PRESCRIPTION
+        drop_text = rx.get('readable_drops', rx['drops_per_min'])
         summary = (
             f"Give {rx['volume_ml']}ml of {fluid.value.replace('_', ' ').title()} "
             f"over {rx['duration_min']} mins.\n"
