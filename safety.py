@@ -36,9 +36,19 @@ class SafetySupervisor:
         if state.current_hematocrit_dynamic < 21.0: # Approx Hb 7
             alerts.anemia_dilution_warning = True
 
-        # 5. Ketoacidosis Risk
-        # If D5 is used but Lactate is high, glucose might not be metabolizing well
-        if input.lactate_mmol_l and input.lactate_mmol_l > 5.0 and state.current_glucose_mg_dl > 250:
+        # 5. Ketoacidosis / Hyperglycemia Risk
+        # Scenario A: Simple Hyperglycemia (Primary Screen for DKA) - Catches Test F
+        is_dka_risk = (input.current_glucose and input.current_glucose > 250.0)
+        
+        # Scenario B: Metabolic Stress/Failure (Your existing logic)
+        # High Lactate + Moderate Hyperglycemia suggests cells aren't using sugar
+        is_metabolic_stress = (
+            input.lactate_mmol_l is not None and 
+            input.lactate_mmol_l > 5.0 and 
+            state.current_glucose_mg_dl > 180 # Lower threshold if lactate is high
+        )
+
+        if is_dka_risk or is_metabolic_stress:
             alerts.risk_ketoacidosis = True
 
         # 6. Dengue Active Leak Warning
