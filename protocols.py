@@ -31,6 +31,7 @@ class PrescriptionEngine:
     def generate_bolus(input: PatientInput, fluid: FluidType) -> dict:
         # SAM Protocol: Slower, smaller volume (10ml/kg over 1 hr)
         is_sam = input.muac_cm < 11.5
+        diagnosis = input.diagnosis
 
         # 1. Specific Dosing for Blood Products
         if fluid == FluidType.PRBC:
@@ -45,14 +46,19 @@ class PrescriptionEngine:
              volume = int(input.weight_kg * 10) # Conservative start
              duration = 20
         else:
-            # Standard Crystalloid Logic (RL/NS)
-            if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
-                # Diarrhea/Vomiting = Pure Volume Loss = 20ml/kg is safe/required
-                volume = int(input.weight_kg * 20)
+            # A. PURE VOLUME LOSS (Diarrhea/Vomiting)
+            # The tank has a leak. We must refill it.
+            if diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+                 # WHO "Plan C"
+                 volume = int(input.weight_kg * 20)
+                 duration = 60 if is_sam else 20 # Slower if malnutrition
+            
+            # B. DISTRIBUTIVE SHOCK (Sepsis/Dengue/Unknown)
+            # The tank is leaky/weak. DO NOT OVERFILL.
+            # FEAST Trial / WHO 2022 Conservative Protocol
             else:
-                # Septic/Dengue/Undifferentiated Shock = 10ml/kg start
-                volume = int(input.weight_kg * (10 if is_sam else 10))
-            duration = 60 if is_sam else 20
+                 volume = int(input.weight_kg * 10) # [CHANGED FROM 20]
+                 duration = 60 if is_sam else 20
         
         # Calculate Flow Rate
         rate_ml_hr = (volume / duration) * 60
