@@ -66,7 +66,10 @@ class SafetySupervisor:
         # 7. Refractory Shock (Hydrocortisone) ---
         # Trigger if Lactate is critically high (>7) implying tissue failure
         # OR if BP remains low despite treatment (Refractory)
+        print(f"DEBUG CHECK: Diagnosis={input.diagnosis}, Lactate={input.lactate_mmol_l}")
+
         if input.lactate_mmol_l and input.lactate_mmol_l > 7.0:
+             print("DEBUG: Triggering Hydrocortisone!")
              alerts.hydrocortisone_needed = True
         
         # 8. Anemia Dilution Warning ---
