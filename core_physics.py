@@ -573,7 +573,16 @@ class PediaFlowPhysicsEngine:
         is_hypoxic = input.sp_o2_percent < 90
         is_tachypneic = input.respiratory_rate_bpm > tachypnea_limit
 
-        if is_hypoxic or is_tachypneic:
+        # Distinguish Pulmonary Edema vs. Acidotic Breathing (DKA/Dehydration)
+        # If SpO2 is good (>90), but breathing is fast, AND diagnosis fits Acidosis,
+        # assume it is compensation, NOT fluid overload.
+        is_acidotic = (
+            input.diagnosis in [ClinicalDiagnosis.SEVERE_DEHYDRATION, ClinicalDiagnosis.SAM_DEHYDRATION] 
+            or (input.current_glucose and input.current_glucose > 250)
+        )
+        
+        # Only flag "Wet Lung" if Hypoxic OR (Tachypneic AND NOT Acidotic)
+        if is_hypoxic or (is_tachypneic and not is_acidotic):
              start_pcwp = 15.0  # Elevated filling pressure (Wet)
              start_p_inter = 4.0 # Verging on edema (Threshold is 5.0)
 
