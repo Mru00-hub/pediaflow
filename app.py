@@ -68,23 +68,40 @@ def generate_prescription(data: dict) -> EngineOutput:
             alerts.anemia_dilution_warning = True
     
     # 6. Construct Human Readable Summary
-    summary = (
-        f"Give {rx['volume_ml']}ml of {fluid.value.replace('_', ' ').title()} "
-        f"over {rx['duration_min']} mins. "
-        f"Set rate to {rx['rate_ml_hr']} ml/hr ({rx['drops_per_min']} drops/min)."
-    )
+    if not sim_res['success']:
+        # CRITICAL STOP
+        stop_reason = sim_res['triggers'][0] if sim_res['triggers'] else "Unsafe Vitals Predicted"
+        summary = (
+            f"⛔ SAFETY HALT: {stop_reason}\n"
+            f"• Recommended Action: Do NOT give full bolus. Re-assess clinical signs.\n"
+            f"• KVO Rate: 10 ml/hr."
+        )
+        # Cap the output values for safety
+        final_vol = 0
+        final_rate = 10
+        final_drops = 10 # Approx 1 drop every 6 seconds
+    else:
+        # STANDARD PRESCRIPTION
+        summary = (
+            f"Give {rx['volume_ml']}ml of {fluid.value.replace('_', ' ').title()} "
+            f"over {rx['duration_min']} mins.\n"
+            f"Set rate to {rx['rate_ml_hr']} ml/hr ({rx['drops_per_min']} drops/min)."
+        )
+        final_vol = rx['volume_ml']
+        final_rate = rx['rate_ml_hr']
+        final_drops = rx['drops_per_min']
 
     # 7. Return Result
     # Maps all the internal physics numbers to the strict output schema
     return EngineOutput(
         recommended_fluid=fluid,
-        bolus_volume_ml=rx['volume_ml'],
+        bolus_volume_ml=final_vol,
         infusion_duration_min=rx['duration_min'],
         
         # Hardware Instructions
         iv_set_used=twin.patient.iv_set_available.name.replace("_", " ").title(),
-        flow_rate_ml_hr=rx['rate_ml_hr'],
-        drops_per_minute=rx['drops_per_min'],
+        flow_rate_ml_hr=final_rate,
+        drops_per_minute=final_drops,
         seconds_per_drop=rx['seconds_per_drop'],
         
         # Predictions & Triggers
