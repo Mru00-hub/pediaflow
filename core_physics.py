@@ -422,16 +422,6 @@ class PediaFlowPhysicsEngine:
             
         vol_loss_liters = input.weight_kg * deficit_factor
         current_v_blood_est = vols["v_blood"] - (vol_loss_liters * 0.25)
-
-        # "Compensated Shock": The heart beats harder (Adrenaline) to handle the empty tank.
-        # Without this, the Frank-Starling curve makes the heart too weak to maintain BP.
-        if deficit_factor > 0:
-             # Boost contractility by 40% for severe dehydration, 20% for moderate
-             compensation_boost = 1.4 if deficit_factor >= 0.10 else 1.2
-             if is_sam:
-                 compensation_boost = 1.05 
-                 
-             contractility *= compensation_boost
         
         # 2. Determine Target MAP
         if input.diastolic_bp is not None:
