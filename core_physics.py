@@ -340,7 +340,7 @@ class PediaFlowPhysicsEngine:
         pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
 
         # Glucose Stress Logic
-        glucose_burn = 5.0 if input.age_months < 1 else 3.0
+        glucose_burn = 2.0 if input.age_months < 1 else 1.5
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
             glucose_burn *= 1.5 # Stress
         if input.age_months < 3: # Low glycogen stores
@@ -486,7 +486,8 @@ class PediaFlowPhysicsEngine:
             interstitial_compliance_ml_mmhg=interstitial_compliance,
             afterload_sensitivity=afterload_sens,
             baseline_capillary_pressure_mmhg=base_pc,
-            optimal_preload_ml=opt_preload
+            optimal_preload_ml=opt_preload,
+            target_cvp_mmhg=assumed_cvp
         )
 
     @staticmethod
@@ -568,6 +569,13 @@ class PediaFlowPhysicsEngine:
         # If we clinically decided pressure is high, we must back-calculate 
         # the fluid volume required to create that pressure.
         # Otherwise, the physics engine will recalculate it back to zero next step.
+        # Back-calculate Blood Volume to match this PCWP/CVP
+             # PCWP = CVP * 1.2  =>  Target CVP = 12.5
+             # CVP = 3.0 + (Excess / Compliance)
+             # Excess = (12.5 - 3.0) * Compliance
+             target_cvp = 12.5
+             vol_excess_ml = (target_cvp - 3.0) * params.venous_compliance_ml_mmhg
+             current_v_blood = params.v_blood_normal_l + (vol_excess_ml / 1000.0)
         
         if start_p_inter > 0:
              # Volume Excess = Pressure * Compliance
@@ -634,8 +642,13 @@ class PediaFlowPhysicsEngine:
         # B. Frank-Starling Curve Implementation 
         # Linear rise up to 1.0 (Optimal), then plateau, then failure.
         if preload_ratio <= 1.0:
-             # Normal ascending limb: More blood = More squeeze
-             preload_efficiency = preload_ratio 
+             # Sympathetic Compensation
+             # If very empty (<0.8), heart rate/contractility rises to maintain output
+             if preload_ratio < 0.8:
+                 compensatory_boost = 1.0 + (0.8 - preload_ratio) * 0.8
+                 preload_efficiency = preload_ratio * compensatory_boost
+             else:
+                 preload_efficiency = preload_ratio 
         elif preload_ratio <= 1.2:
              # Plateau (Optimal stretch)
              preload_efficiency = 1.0 
@@ -650,14 +663,16 @@ class PediaFlowPhysicsEngine:
         denom = 1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity
         afterload_factor = 1.0 / max(0.5, denom)
 
-        # D. Resulting Cardiac Output (L/min)
+        # Dynamic SVR 
+        # SVR adjusts to CVP changes (Baroreflex). 
+        # If CVP drops, SVR rises to maintain MAP.
+        safe_cvp = max(0.1, state.cvp_mmHg)
+        svr_dynamic = params.svr_resistance * ((params.target_cvp_mmhg / safe_cvp) ** 0.3)
+        
+        # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
-
-        # --- 2. PRESSURE DERIVATION ---
-        # MAP = (CO * SVR) + CVP
-        # Factor 80 converts flow/resistance units to mmHg roughly
-        derived_map = (co_l_min * params.svr_resistance / 80.0) + state.cvp_mmHg
-        derived_map = max(30.0, min(derived_map, 160.0)) # Safety Clamp
+        derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
+        derived_map = max(30.0, min(derived_map, 160.0))
 
         # --- 3. STARLING FORCES (Capillary Leak) ---
         # Scale Pc relative to baseline state
@@ -684,10 +699,11 @@ class PediaFlowPhysicsEngine:
         # --- 4. RENAL & LYMPHATIC ---
         # Lymph increases with tissue pressure
         q_lymph = 0.0
-        if state.p_interstitial_mmHg > -2.0:
-            # Cap drive at 2x baseline to prevent infinite drainage
-            lymph_drive = min((state.p_interstitial_mmHg + 2.0) / 3.0, 2.0)
-            q_lymph = params.lymphatic_drainage_capacity_ml_min * max(0.5, lymph_drive)
+        # Baseline drive (0.2) + Pressure drive
+        lymph_drive = 0.2 + max(0.0, (state.p_interstitial_mmHg + 2.0) / 4.0)
+        # Cap at 3x
+        lymph_drive = min(lymph_drive, 3.0)
+        q_lymph = params.lymphatic_drainage_capacity_ml_min * lymph_drive
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
