@@ -311,6 +311,8 @@ class PhysiologicalParams:
     weight_kg: float  # Required for glucose metabolic burn calculation
     interstitial_compliance_ml_mmhg: float # Replaces magic number 100.0
 
+    target_cvp_mmhg: float
+
     # CONFIDENCE INTERVALS
     # Used to widen safety margins in output
     albumin_uncertainty_g_dl: float = 0.5 
