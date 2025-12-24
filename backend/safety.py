@@ -83,9 +83,9 @@ class SafetySupervisor:
 
         if input.lactate_mmol_l is not None:
             print(f"DEBUG CHECK: Lactate={input.lactate_mmol_l}")
-        if input.lactate_mmol_l > 7.0:
-            print("DEBUG: Triggering Hydrocortisone!")
-            alerts.hydrocortisone_needed = True
+            if input.lactate_mmol_l > 7.0:
+                print("DEBUG: Triggering Hydrocortisone!")
+                alerts.hydrocortisone_needed = True
         else:
             print("DEBUG: Lactate is None")
         
