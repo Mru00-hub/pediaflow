@@ -391,6 +391,8 @@ class PediaFlowPhysicsEngine:
             base_pc = 20.0
         else:
             base_pc = 25.0    
+
+        opt_preload = (vols["v_blood"] * 1000.0) * 1.15
     
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
