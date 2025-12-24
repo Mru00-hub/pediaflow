@@ -122,6 +122,7 @@ class PrescriptionResponse(BaseModel):
     
     # UX
     human_readable_summary: str
+    trajectory: List[dict]
     generated_at: datetime = Field(default_factory=datetime.now)
 
 # 1. Define the Input for the Simulation
@@ -130,6 +131,10 @@ class SimulationRequest(BaseModel):
     fluid_type: str          # What you want to give (e.g. "normal_saline")
     volume_ml: int           # How much (e.g. 500)
     duration_min: int        # How fast (e.g. 30)
+
+class SimulationResponse(BaseModel):
+    summary: dict            # Start BP, End BP, Safety Alerts
+    graph_data: List[dict]   # Time-series data for the chart
 
 # --- 4. ENDPOINTS ---
 
@@ -166,7 +171,7 @@ async def get_prescription(patient: PatientRequest):
         logger.error(f"Internal Engine Failure: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal Physiological Engine Error")
 
-@app.post("/simulate")
+@app.post("/simulate", response_model=SimulationResponse)
 def simulate_outcome(request: SimulationRequest):
     """
     Predicts the future: 'What happens if I do X?'
