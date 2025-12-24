@@ -5,7 +5,7 @@ import { PrescriptionCard } from './components/PrescriptionCard';
 import { TrajectoryChart } from './components/TrajectoryChart';
 import { TankVisualizer } from './components/TankVisualizer';
 import { SimulationPanel } from './components/SimulationPanel';
-import { PatientInput } from './types'; 
+import type { PatientInput } from './types'; 
 
 function App() {
   const { generatePlan, prescription, loading, error, reset } = usePediaFlow();
