@@ -1,5 +1,5 @@
 import React from 'react';
-import { PrescriptionResponse } from '../types';
+import type { PrescriptionResponse } from '../types';
 import { Heart, Brain, Activity, Droplets, AlertOctagon } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
