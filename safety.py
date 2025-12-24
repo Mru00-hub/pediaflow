@@ -66,7 +66,7 @@ class SafetySupervisor:
             # Logic B: Physics calculates active capillary leak (> 1.0 ml/min)
             # This captures the "leaky state" (Day 4-6) even if the bolus temporarily 
             # dilutes the blood (masking the Hct rise).
-            is_leaking_active = state.q_leak_ml_min > 1.0 
+            is_leaking_active = state.q_leak_ml_min > 0.1
             
             if hct_rising or is_leaking_active:
                 alerts.dengue_leak_warning = True
