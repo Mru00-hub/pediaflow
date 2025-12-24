@@ -2,7 +2,8 @@ import React from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { PatientInput, ClinicalDiagnosis, IVSetType } from '../types';
+import { ClinicalDiagnosis, IVSetType } from '../types'; // Enums are real values
+import type { PatientInput } from '../types';            // Interface is just a type
 import { Activity, Thermometer, Droplets, HeartPulse } from 'lucide-react';
 
 // 1. Zod Schema - Mirrors 'PatientRequest' in main.py strict validation
