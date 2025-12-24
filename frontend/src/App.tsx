@@ -4,9 +4,21 @@ import { InputForm } from './components/InputForm';
 import { PrescriptionCard } from './components/PrescriptionCard';
 import { TrajectoryChart } from './components/TrajectoryChart';
 import { TankVisualizer } from './components/TankVisualizer';
+import { SimulationPanel } from './components/SimulationPanel';
+import { PatientInput } from './types'; 
 
 function App() {
   const { generatePlan, prescription, loading, error, reset } = usePediaFlow();
+  const [patientData, setPatientData] = useState<PatientInput | null>(null);
+  const handleFormSubmit = (data: PatientInput) => {
+    setPatientData(data); // Store for Simulator
+    generatePlan(data);   // Generate Standard Plan
+  };
+
+  const handleReset = () => {
+    reset();
+    setPatientData(null);
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-8 font-sans text-slate-900">
@@ -53,6 +65,9 @@ function App() {
                   {/* Right: The Prediction (Graph) */}
                   <TrajectoryChart data={prescription.trajectory} />
                </div>
+              {patientData && (
+                  <SimulationPanel patient={patientData} />
+               )}
             </div>
           ) : (
             // Empty State
@@ -64,7 +79,6 @@ function App() {
             </div>
           )}
         </div>
-
       </main>
     </div>
   );
