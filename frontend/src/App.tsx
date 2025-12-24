@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { usePediaFlow } from './usePediaFlow';
 import { InputForm } from './components/InputForm';
 import { PrescriptionCard } from './components/PrescriptionCard';
+import { TrajectoryChart } from './components/TrajectoryChart';
+import { TankVisualizer } from './components/TankVisualizer';
 
 function App() {
   const { generatePlan, prescription, loading, error, reset } = usePediaFlow();
@@ -43,9 +45,13 @@ function App() {
                {/* 1. Prescription Card with Metronome */}
                <PrescriptionCard data={prescription} />
                
-               {/* Placeholder for Phase 3: Graphs */}
-               <div className="bg-white p-6 rounded-xl border border-dashed border-slate-300 flex items-center justify-center h-48 text-slate-400">
-                  Graphs & Tank Visualization coming in Phase 3
+               {/* Phase 3: Visual Intelligence */}
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Left: The Physics (Tanks) */}
+                  <TankVisualizer data={prescription} />
+                  
+                  {/* Right: The Prediction (Graph) */}
+                  <TrajectoryChart data={prescription.trajectory} />
                </div>
             </div>
           ) : (
