@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { api } from '../api';
-import { PatientInput, FluidType, SimulationResponse, SafetyAlerts } from '../types';
+import { FluidType } from '../types'; 
+import type { PatientInput, SimulationResponse, SafetyAlerts } from '../types';
 import { TrajectoryChart } from './TrajectoryChart';
 import { TankVisualizer } from './TankVisualizer';
 import { Play, RotateCcw, Activity } from 'lucide-react';
