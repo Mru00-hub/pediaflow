@@ -6,13 +6,20 @@ class SafetySupervisor:
     def check_real_time(state: SimulationState, params: PhysiologicalParams, 
                         input: PatientInput) -> SafetyAlerts:
         alerts = SafetyAlerts()
-        
-        # Cerebral Edema (Na change > 12 mEq/24h)
-        time_hours = state.time_minutes / 60.0
-        if time_hours > 0:
-            na_rate = state.total_sodium_load_meq / time_hours
-            if na_rate * 24 > 12.0:
+
+        # Cerebral Edema Risk (Tonicity Mismatch)
+        # Calculate Sodium Concentration of the fluid given so far
+        if state.total_volume_infused_ml > 0:
+            fluid_na_conc = (state.total_sodium_load_meq * 1000.0) / state.total_volume_infused_ml
+            
+            # RISK: Patient is Hypernatremic (>145) and we give Hypotonic fluid (<130)
+            # This causes rapid water shift into brain cells.
+            if input.current_sodium > 145 and fluid_na_conc < 130:
                 alerts.risk_cerebral_edema = True
+            
+            # RISK: Rapid Hyponatremia Induction (Fluid is much lower than patient)
+            if fluid_na_conc < (input.current_sodium - 15):
+                 alerts.risk_cerebral_edema = True
         
         # Hypoglycemia
         if state.current_glucose_mg_dl < 54.0:
