@@ -51,7 +51,7 @@ def generate_prescription(data: dict) -> EngineOutput:
     # Fast-forward time to check for edema/overload risks
     sim_res = PediaFlowPhysicsEngine.run_simulation(
         twin.initial_state, twin.physics_params, fluid, 
-        rx['volume_ml'], rx['duration_min']
+        rx['volume_ml'], rx['duration_min'], return_series=True
     )
     
     # 5. Check Safety
@@ -110,7 +110,7 @@ def generate_prescription(data: dict) -> EngineOutput:
         stop_trigger_heart_rate=twin.physics_params.target_heart_rate_upper_limit,
         stop_trigger_respiratory_rate=twin.physics_params.target_respiratory_rate_limit,
         stop_trigger_liver_span_increase=True, # Standard shock protocol trigger
-        
+        trajectory=sim_res.get('trajectory', []), 
         # Hard Safety Limits
         # Max safe rate is generally capped at 2x the calculated bolus rate for pump safety
         max_safe_infusion_rate_ml_hr=int(rx['rate_ml_hr'] * 1.5), 
