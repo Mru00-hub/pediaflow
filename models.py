@@ -421,3 +421,5 @@ class EngineOutput:
     # [NEW] Summary for Quick Read
     human_readable_summary: str = "" 
     # e.g. "Give 100ml RL over 1 hr. Stop if RR > 55."
+
+    trajectory: List[dict] = field(default_factory=list) 
