@@ -104,7 +104,8 @@ class PediaFlowPhysicsEngine:
         # Baseline = 1.0. SAM/Sepsis reduces it.
         contractility = 1.0
         
-        if input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION or input.muac_cm < 11.5:
+        is_sam = (input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION or input.muac_cm < 11.5)
+        if is_sam:
             contractility *= 0.5  # The "Flabby Heart" penalty
         
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
