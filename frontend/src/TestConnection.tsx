@@ -7,7 +7,7 @@ export const TestConnection = () => {
   const { generatePlan, prescription, loading, error } = usePediaFlow();
 
   const handleTest = () => {
-    [span_5](start_span)// Hardcoded test case based on your 'debug_calibration.py'[span_5](end_span)
+    // Hardcoded test case based on your 'debug_calibration.py'
     generatePlan({
       age_months: 60,
       weight_kg: 18.0,
