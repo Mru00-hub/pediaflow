@@ -36,7 +36,7 @@ export enum OngoingLosses {
 
 // --- DATA STRUCTURES ---
 
-[span_0](start_span)// Matches class PatientInput in models.py[span_0](end_span)
+// Matches class PatientInput in models.py[span_0](end_span)
 export interface PatientInput {
   // Demographics
   age_months: number;
@@ -72,7 +72,7 @@ export interface PatientInput {
   time_since_last_urine_hours?: number;
 }
 
-[span_2](start_span)// Matches class SafetyAlerts in models.py[span_2](end_span)
+// Matches class SafetyAlerts in models.py[span_2](end_span)
 export interface SafetyAlerts {
   risk_pulmonary_edema: boolean;
   risk_volume_overload: boolean;
@@ -85,7 +85,7 @@ export interface SafetyAlerts {
   dengue_leak_warning: boolean;
 }
 
-[span_3](start_span)// Matches PrescriptionResponse in main.py[span_3](end_span)
+// Matches PrescriptionResponse in main.py[span_3](end_span)
 export interface PrescriptionResponse {
   recommended_fluid: FluidType;
   bolus_volume_ml: number;
@@ -119,7 +119,7 @@ export interface PrescriptionResponse {
   generated_at: string;
 }
 
-[span_4](start_span)// Matches SimulationRequest in main.py[span_4](end_span)
+// Matches SimulationRequest in main.py[span_4](end_span)
 export interface SimulationRequest {
   patient: PatientInput;
   fluid_type: string;
