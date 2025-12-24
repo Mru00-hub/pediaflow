@@ -26,7 +26,9 @@ class SafetySupervisor:
             alerts.risk_hypoglycemia = True
         
         # SAM Heart Warning
-        if params.cardiac_contractility < 0.6:
+        is_sam_clinical = (input.muac_cm < 11.5) or (input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION)
+        
+        if params.cardiac_contractility < 0.6 or is_sam_clinical:
             alerts.sam_heart_warning = True
 
         # 4. Anemia / Hemodilution Warning (Secondary check)
