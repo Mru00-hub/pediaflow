@@ -60,9 +60,17 @@ class SafetySupervisor:
         # 6. Dengue Active Leak Warning
         # If we see Hct rising despite fluid (hemoconcentration)
         if input.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
-            if state.current_hematocrit_dynamic > input.hematocrit_pct:
+            # Logic A: Simulation shows Hct rising (Severe Hemoconcentration)
+            hct_rising = state.current_hematocrit_dynamic > input.hematocrit_pct
+            
+            # Logic B: Physics calculates active capillary leak (> 1.0 ml/min)
+            # This captures the "leaky state" (Day 4-6) even if the bolus temporarily 
+            # dilutes the blood (masking the Hct rise).
+            is_leaking_active = state.q_leak_ml_min > 1.0 
+            
+            if hct_rising or is_leaking_active:
                 alerts.dengue_leak_warning = True
-
+                
         # 7. Refractory Shock (Hydrocortisone) ---
         # Trigger if Lactate is critically high (>7) implying tissue failure
         # OR if BP remains low despite treatment (Refractory)
