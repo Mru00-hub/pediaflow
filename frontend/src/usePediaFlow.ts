@@ -1,7 +1,7 @@
 // usePediaFlow.ts
 import { useState } from 'react';
 import { api } from './api';
-import { PatientInput, PrescriptionResponse } from './types';
+import type { PatientInput, PrescriptionResponse } from './types';
 
 export const usePediaFlow = () => {
   const [prescription, setPrescription] = useState<PrescriptionResponse | null>(null);
