@@ -150,6 +150,23 @@ class PediaFlowPhysicsEngine:
             
         svr = base_svr * viscosity * temp_factor
 
+        # "Compensated Shock" 
+        # Logic: We need to check deficit to apply boost to 'contractility'
+        deficit_factor = 0.0
+        if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+             deficit_factor = 0.15 if input.capillary_refill_sec > 4 else 0.10
+        elif input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
+             deficit_factor = 0.08
+        
+        if deficit_factor > 0:
+             compensation_boost = 1.4 if deficit_factor >= 0.10 else 1.2
+             
+             # NEW EXCEPTION: If SAM, remove or severely reduce the boost
+             if is_sam:
+                 compensation_boost = 1.05 
+                 
+             contractility *= compensation_boost
+
         return {
             "contractility": contractility,
             "svr": svr,
@@ -411,7 +428,10 @@ class PediaFlowPhysicsEngine:
         if deficit_factor > 0:
              # Boost contractility by 40% for severe dehydration, 20% for moderate
              compensation_boost = 1.4 if deficit_factor >= 0.10 else 1.2
-             hemo["contractility"] *= compensation_boost
+             if is_sam:
+                 compensation_boost = 1.05 
+                 
+             contractility *= compensation_boost
         
         # 2. Determine Target MAP
         if input.diastolic_bp is not None:
