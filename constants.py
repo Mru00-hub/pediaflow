@@ -8,7 +8,6 @@ class FluidType(Enum):
     D5_NS = "dextrose_5_normal_saline"      # For Hypoglycemia Risk
     RESOMAL = "resomal_rehydration_sol"     # For SAM
     PRBC = "packed_red_blood_cells"         # For Severe Anemia
-    HALF_STRENGTH = "0.45_normal_saline"    # Maintenance
     COLLOID_ALBUMIN = "albumin_5_percent" # REQUIRED: For Refractory Dengue/Sepsis
     ORS_SOLUTION = "oral_rehydration_solution" # REQUIRED: For bridging IV to Oral
     HALF_NS = "half_normal_saline"
@@ -23,6 +22,7 @@ class FluidProperties:
     
     # Critical for specific logic
     is_colloid: bool = False
+    osmolarity: float = 280.0  # Default to isotonic if not specified
 
 class AGE_CONSTANTS:
     # Age (months): (Min RR, Max RR)
@@ -48,17 +48,14 @@ class FLUID_LIBRARY:
         FluidType.RL: FluidProperties(
             name="Ringer Lactate", 
             sodium_meq_l=130, glucose_g_l=0, oncotic_pressure_mmhg=0, 
-            vol_distribution_intravascular=0.25 # Crystalloid: 1/4 stays, 3/4 leaks
+            vol_distribution_intravascular=0.25, # Crystalloid: 1/4 stays, 3/4 leaks
+            osmolarity=273.0
         ),
         FluidType.NS: FluidProperties(
             name="Normal Saline", 
             sodium_meq_l=154, glucose_g_l=0, oncotic_pressure_mmhg=0, 
-            vol_distribution_intravascular=0.25
-        ),
-        FluidType.HALF_STRENGTH: FluidProperties(
-            name="0.45% Normal Saline",
-            sodium_meq_l=77, glucose_g_l=0, oncotic_pressure_mmhg=0,
-            vol_distribution_intravascular=0.15 # Leaks faster than NS
+            vol_distribution_intravascular=0.25,
+            osmolarity=308.0
         ),
         FluidType.RESOMAL: FluidProperties(
             name="ReSoMal",
@@ -68,19 +65,22 @@ class FLUID_LIBRARY:
         FluidType.D5_NS: FluidProperties(
             name="D5 Normal Saline", 
             sodium_meq_l=154, glucose_g_l=50, oncotic_pressure_mmhg=0, 
-            vol_distribution_intravascular=0.20 # Glucose metabolizes -> free water -> cells
+            vol_distribution_intravascular=0.20, # Glucose metabolizes -> free water -> cells
+            osmolarity=560.0
         ),
         FluidType.COLLOID_ALBUMIN: FluidProperties(
             name="Albumin 5%", 
             sodium_meq_l=145, glucose_g_l=0, oncotic_pressure_mmhg=20.0, # High Pull
             vol_distribution_intravascular=1.0, # Stays in vessel
-            is_colloid=True
+            is_colloid=True,
+            osmolarity=308.0
         ),
         FluidType.PRBC: FluidProperties(
             name="Packed Red Blood Cells",
             sodium_meq_l=140, glucose_g_l=0, oncotic_pressure_mmhg=25.0,
             vol_distribution_intravascular=1.0,
-            is_colloid=True
+            is_colloid=True,
+            osmolarity=300.0
         ),
         FluidType.ORS_SOLUTION: FluidProperties(
             name="Oral Rehydration Solution",
@@ -88,11 +88,13 @@ class FLUID_LIBRARY:
             vol_distribution_intravascular=0.20 
         ),
         FluidType.HALF_NS: FluidProperties(
+            name="Half Normal Saline (0.45%)",
             sodium_meq_l=77.0,       # Half of 154
             glucose_g_l=0.0,
-            osmolarity=154.0,        # Hypotonic (Dangerous for brain)
+            oncotic_pressure_mmhg=0.0,        
             vol_distribution_intravascular=0.15, # Leaves vessels quickly
-            is_colloid=False
+            is_colloid=False, 
+            osmolarity=154.0 # Hypotonic (Dangerous for brain)
         ),
     }
 
