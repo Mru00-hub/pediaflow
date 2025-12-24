@@ -422,8 +422,8 @@ class PediaFlowPhysicsEngine:
         preload_ratio = (current_v_blood_est * 1000.0) / opt_preload
         
         # Standard Frank-Starling Logic
-        if preload_ratio < 0.5:
-             preload_efficiency = preload_ratio * 2.0 
+        if preload_ratio <= 1.0:
+             preload_efficiency = preload_ratio
         elif preload_ratio <= 1.2:
              preload_efficiency = 1.0 
         else:
