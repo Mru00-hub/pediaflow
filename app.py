@@ -86,7 +86,7 @@ def generate_prescription(data: dict) -> EngineOutput:
         summary = (
             f"Give {rx['volume_ml']}ml of {fluid.value.replace('_', ' ').title()} "
             f"over {rx['duration_min']} mins.\n"
-            f"Set rate to {rx['rate_ml_hr']} ml/hr ({rx['drops_per_min']} drops/min)."
+            f"Set rate to {rx['rate_ml_hr']} ml/hr ({drop_text} drops/min)." 
         )
         final_vol = rx['volume_ml']
         final_rate = rx['rate_ml_hr']
