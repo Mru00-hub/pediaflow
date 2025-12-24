@@ -480,7 +480,7 @@ class PediaFlowPhysicsEngine:
             
             max_cardiac_output_l_min=(input.weight_kg * 0.15), # approx 150ml/kg/min max
             venous_compliance_ml_mmhg=input.weight_kg * 1.5,
-            osmotic_conductance_k=0.1,
+            osmotic_conductance_k=0.5,
             lymphatic_drainage_capacity_ml_min=input.weight_kg * 0.03, # ~1.8 ml/kg/hr
             
             intracellular_sodium_bias=sodium_bias,
