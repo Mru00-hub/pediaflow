@@ -11,6 +11,7 @@ class FluidType(Enum):
     HALF_STRENGTH = "0.45_normal_saline"    # Maintenance
     COLLOID_ALBUMIN = "albumin_5_percent" # REQUIRED: For Refractory Dengue/Sepsis
     ORS_SOLUTION = "oral_rehydration_solution" # REQUIRED: For bridging IV to Oral
+    HALF_NS = "half_normal_saline"
 
 @dataclass
 class FluidProperties:
@@ -85,7 +86,14 @@ class FLUID_LIBRARY:
             name="Oral Rehydration Solution",
             sodium_meq_l=75, glucose_g_l=13.5, oncotic_pressure_mmhg=0,
             vol_distribution_intravascular=0.20 
-        )
+        ),
+        FluidType.HALF_NS: FluidProperties(
+            sodium_meq_l=77.0,       # Half of 154
+            glucose_g_l=0.0,
+            osmolarity=154.0,        # Hypotonic (Dangerous for brain)
+            vol_distribution_intravascular=0.15, # Leaves vessels quickly
+            is_colloid=False
+        ),
     }
 
     @staticmethod
