@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { PrescriptionResponse } from '../types';
+import type { PrescriptionResponse } from '../types';
 import { AlertTriangle, Droplet, Clock, Gauge, ShieldAlert } from 'lucide-react';
 import clsx from 'clsx';
 
