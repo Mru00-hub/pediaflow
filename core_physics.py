@@ -565,6 +565,17 @@ class PediaFlowPhysicsEngine:
              start_pcwp = 15.0  # Elevated filling pressure (Wet)
              start_p_inter = 4.0 # Verging on edema (Threshold is 5.0)
 
+        # If we clinically decided pressure is high, we must back-calculate 
+        # the fluid volume required to create that pressure.
+        # Otherwise, the physics engine will recalculate it back to zero next step.
+        
+        if start_p_inter > 0:
+             # Volume Excess = Pressure * Compliance
+             excess_vol_liters = (start_p_inter * params.interstitial_compliance_ml_mmhg) / 1000.0
+             
+             # Force the volume to match the pressure
+             current_v_inter = params.v_inter_normal_l + excess_vol_liters
+
         return SimulationState(
             time_minutes=0.0,
             
