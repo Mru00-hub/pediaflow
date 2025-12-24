@@ -46,7 +46,12 @@ class PrescriptionEngine:
              duration = 20
         else:
             # Standard Crystalloid Logic (RL/NS)
-            volume = int(input.weight_kg * (10 if is_sam else 20))
+            if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+                # Diarrhea/Vomiting = Pure Volume Loss = 20ml/kg is safe/required
+                volume = int(input.weight_kg * 20)
+            else:
+                # Septic/Dengue/Undifferentiated Shock = 10ml/kg start
+                volume = int(input.weight_kg * (10 if is_sam else 10))
             duration = 60 if is_sam else 20
         
         # Calculate Flow Rate
