@@ -71,12 +71,14 @@ export const InputForm: React.FC<Props> = ({ onSubmit, loading }) => {
         </div>
       </div>
 
-      {/* SECTION 2: VITALS (Visual Grouping) */}
+            {/* SECTION 2: VITALS & LABS */}
       <div className="space-y-4">
         <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider border-b pb-2 flex items-center gap-2">
-          <Activity className="w-4 h-4" /> Vitals & Triage
+          <Activity className="w-4 h-4" /> Vitals & Labs
         </h3>
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          
+          {/* Row 1: The Basics */}
           <div className="relative">
             <label className="block text-sm font-medium text-slate-700">Heart Rate</label>
             <input type="number" {...register("heart_rate", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
@@ -86,10 +88,16 @@ export const InputForm: React.FC<Props> = ({ onSubmit, loading }) => {
             <label className="block text-sm font-medium text-slate-700">Systolic BP</label>
             <input type="number" {...register("systolic_bp", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Diastolic BP</label>
+            <input type="number" {...register("diastolic_bp", { valueAsNumber: true })} placeholder="Optional" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
+          </div>
            <div>
             <label className="block text-sm font-medium text-slate-700">Temp (°C)</label>
             <input step="0.1" {...register("temp_celsius", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
           </div>
+
+          {/* Row 2: Respiratory & Perfusion */}
           <div>
             <label className="block text-sm font-medium text-slate-700">Resp Rate</label>
             <input type="number" {...register("respiratory_rate_bpm", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
@@ -98,23 +106,52 @@ export const InputForm: React.FC<Props> = ({ onSubmit, loading }) => {
             <label className="block text-sm font-medium text-slate-700">SpO2 (%)</label>
             <input type="number" {...register("sp_o2_percent", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
           </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700">Cap Refill (sec)</label>
+            <input type="number" {...register("capillary_refill_sec", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
+          </div>
            <div>
             <label className="block text-sm font-medium text-slate-700">Hb (g/dL)</label>
             <input step="0.1" {...register("hemoglobin_g_dl", { valueAsNumber: true })} className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border" />
           </div>
+          
+          {/* Row 3: Advanced Labs (Optional) */}
+          <div className="col-span-2 md:col-span-1">
+             <label className="block text-sm font-medium text-slate-700">Glucose (mg/dL)</label>
+             <input type="number" {...register("current_glucose", { valueAsNumber: true })} placeholder="90" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border bg-slate-50" />
+          </div>
+          <div className="col-span-2 md:col-span-1">
+             <label className="block text-sm font-medium text-slate-700">Lactate (mmol/L)</label>
+             <input step="0.1" {...register("lactate_mmol_l", { valueAsNumber: true })} placeholder="--" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border bg-slate-50" />
+          </div>
+           <div className="col-span-2 md:col-span-1">
+             <label className="block text-sm font-medium text-slate-700">Hematocrit (%)</label>
+             <input step="0.1" {...register("hematocrit_pct", { valueAsNumber: true })} placeholder="35" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border bg-slate-50" />
+          </div>
+           <div className="col-span-2 md:col-span-1">
+             <label className="block text-sm font-medium text-slate-700">Sodium (mEq/L)</label>
+             <input type="number" {...register("current_sodium", { valueAsNumber: true })} placeholder="140" className="mt-1 block w-full rounded-md border-slate-300 shadow-sm p-2 border bg-slate-50" />
+          </div>
+
         </div>
       </div>
 
       {/* SECTION 3: CONTEXT */}
-      <div>
-        <label className="block text-sm font-medium text-slate-700 mb-1">Working Diagnosis</label>
-        <select {...register("diagnosis")} className="w-full p-2 border rounded bg-slate-50">
-          <option value={ClinicalDiagnosis.UNKNOWN}>Undifferentiated Shock</option>
-          <option value={ClinicalDiagnosis.SEVERE_DEHYDRATION}>Severe Dehydration (Diarrhea)</option>
-          <option value={ClinicalDiagnosis.SEPTIC_SHOCK}>Septic Shock</option>
-          <option value={ClinicalDiagnosis.DENGUE_SHOCK}>Dengue Shock Syndrome</option>
-          <option value={ClinicalDiagnosis.SAM_DEHYDRATION}>SAM + Dehydration</option>
-        </select>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Working Diagnosis</label>
+          <select {...register("diagnosis")} className="w-full p-2 border rounded bg-slate-50">
+            <option value={ClinicalDiagnosis.UNKNOWN}>Undifferentiated Shock</option>
+            <option value={ClinicalDiagnosis.SEVERE_DEHYDRATION}>Severe Dehydration (Diarrhea)</option>
+            <option value={ClinicalDiagnosis.SEPTIC_SHOCK}>Septic Shock</option>
+            <option value={ClinicalDiagnosis.DENGUE_SHOCK}>Dengue Shock Syndrome</option>
+            <option value={ClinicalDiagnosis.SAM_DEHYDRATION}>SAM + Dehydration</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Illness Day (If Dengue)</label>
+          <input type="number" {...register("illness_day", { valueAsNumber: true })} placeholder="e.g. 4" className="w-full p-2 border rounded" />
+        </div>
       </div>
 
       <button 
