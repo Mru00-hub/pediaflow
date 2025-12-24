@@ -39,7 +39,7 @@ class PrescriptionEngine:
             # Duration: Emergency = 60 mins, Standard = 240 mins.
             # We assume Emergency here since it's a shock calculator.
             volume = int(input.weight_kg * 10)
-            duration = 60 # Slower than crystalloid (20 mins)
+            duration = 240 # Slower than crystalloid (20 mins)
         elif fluid == FluidType.COLLOID_ALBUMIN:
              # Colloids are potent expanders. 10-20ml/kg.
              volume = int(input.weight_kg * 10) # Conservative start
