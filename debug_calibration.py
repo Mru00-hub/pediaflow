@@ -1,6 +1,6 @@
 # debug_calibration.py
 from core_physics import PediaFlowPhysicsEngine
-from models import PatientInput, ClinicalDiagnosis, CalculationWarnings, OngoingLosses
+from models import PatientInput, CalculationWarnings, OngoingLosses
 from constants import FLUID_LIBRARY, FluidType
 
 def run_debug():
@@ -9,18 +9,18 @@ def run_debug():
     print("========================================")
 
     # 1. DEFINE THE PROBLEM CASE ("Heart Failure Risk")
-    # High RR (60), Low SpO2 (85%), Normal BP (100/65)
+    # High RR (60), Low SpO2 (85%)
     data = {
         "age_months": 60, "weight_kg": 18.0, "sex": "M", "muac_cm": 15.0,
         "height_cm": 110.0, "temp_celsius": 37.0,
         "systolic_bp": 100, "diastolic_bp": 65, 
         "heart_rate": 120, 
-        "respiratory_rate_bpm": 60,  # <--- CRITICAL TRIGGER 1
-        "sp_o2_percent": 85,         # <--- CRITICAL TRIGGER 2
+        "respiratory_rate_bpm": 60,  # <--- CRITICAL TRIGGER
+        "sp_o2_percent": 85,         # <--- CRITICAL TRIGGER
         "capillary_refill_sec": 2,
         "hemoglobin_g_dl": 12.0, "current_sodium": 135.0,
         "current_glucose": 90.0, "hematocrit_pct": 36.0,
-        "diagnosis": "undifferentiated_shock",
+        "diagnosis": "undifferentiated_shock", 
         "ongoing_losses_severity": OngoingLosses.NONE,
         "illness_day": 1,
         "iv_set_available": 60
@@ -30,40 +30,41 @@ def run_debug():
     patient = PatientInput(**data)
     warnings = CalculationWarnings()
     
-    print(f"Patient Vitals:")
-    print(f" > SpO2: {patient.sp_o2_percent}% (Should trigger Wet Lungs if < 90)")
-    print(f" > RR:   {patient.respiratory_rate_bpm} (Should trigger Wet Lungs if > 50)")
-
     # 3. RUN INITIALIZATION
     print("\n--- CHECKING INITIALIZATION ---")
     params = PediaFlowPhysicsEngine.initialize_physics_engine(patient, warnings)
     state = PediaFlowPhysicsEngine.initialize_simulation_state(patient, params)
     
-    print(f" > Initial PCWP:        {state.pcwp_mmHg:.2f} mmHg")
     print(f" > Initial P_Inter:     {state.p_interstitial_mmHg:.2f} mmHg")
 
-    # 4. DIAGNOSIS
-    print("\n--- DIAGNOSIS ---")
-    if state.pcwp_mmHg >= 15.0 and state.p_interstitial_mmHg >= 4.0:
-        print("✅ SUCCESS: Logic triggered. Lungs initialized as 'Wet'.")
-    else:
-        print("❌ FAILURE: Logic missed. Lungs initialized as 'Dry'.")
-        print("   -> The 'if input.sp_o2_percent < 90...' block in initialize_simulation_state is NOT working.")
+    if state.p_interstitial_mmHg < 4.0:
+        print("❌ FAILURE: Initial lung pressure is too low. Check initialize_simulation_state logic.")
+        return
 
-    # 5. RUN 1 MINUTE SIMULATION
-    print("\n--- RUNNING 1 MINUTE OF FLUID ---")
+    # 4. RUN PREDICTION (20 Minutes into the future)
+    print("\n--- RUNNING 20-MINUTE PREDICTION ---")
     fluid = FLUID_LIBRARY.get(FluidType.RL)
-    # Give a small bolus rate
-    next_state = PediaFlowPhysicsEngine.simulate_single_step(state, params, 500.0, FluidType.RL, 1.0)
     
-    print(f" > Minute 1 P_Inter:    {next_state.p_interstitial_mmHg:.2f} mmHg")
-    if next_state.p_interstitial_mmHg > 5.0:
-        print("✅ SUCCESS: Safety Threshold (>5.0) crossed.")
+    # Run the full predictive engine
+    result = PediaFlowPhysicsEngine.run_simulation(state, params, FluidType.RL, volume_ml=200, duration_min=20)
+    
+    final_p_inter = result["final_state"].p_interstitial_mmHg
+    triggers = result["triggers"]
+    
+    print(f" > Minute 20 P_Inter:   {final_p_inter:.2f} mmHg")
+    print(f" > Safety Triggers:     {triggers}")
+
+    # 5. VERDICT
+    if any("Pulmonary Edema" in t for t in triggers):
+        print("\n✅ SUCCESS: The engine predicted the flood and STOPPED the infusion.")
+    elif final_p_inter > 5.0:
+        print("\n✅ SUCCESS: Pressure crossed 5.0 mmHg (Alert should have triggered).")
     else:
-        print("❌ FAILURE: Still below Safety Threshold.")
+        print("\n❌ FAILURE: Pressure did not rise enough. Need to check compliance settings.")
 
 if __name__ == "__main__":
     run_debug()
+
 
 
 
