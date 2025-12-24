@@ -81,9 +81,13 @@ class SafetySupervisor:
         # OR if BP remains low despite treatment (Refractory)
         print(f"DEBUG CHECK: Diagnosis={input.diagnosis}, Lactate={input.lactate_mmol_l}")
 
-        if input.lactate_mmol_l and input.lactate_mmol_l > 7.0:
-             print("DEBUG: Triggering Hydrocortisone!")
-             alerts.hydrocortisone_needed = True
+        if input.lactate_mmol_l is not None:
+            print(f"DEBUG CHECK: Lactate={input.lactate_mmol_l}")
+        if input.lactate_mmol_l > 7.0:
+            print("DEBUG: Triggering Hydrocortisone!")
+            alerts.hydrocortisone_needed = True
+        else:
+            print("DEBUG: Lactate is None")
         
         # 8. Anemia Dilution Warning ---
         # Trigger if Hb is in the "Danger Zone" (5-7) where fluids might dilute it < 5.
