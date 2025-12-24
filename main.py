@@ -69,6 +69,7 @@ class PatientRequest(BaseModel):
     current_sodium: Optional[float] = Field(140.0, gt=100.0, le=180.0)
     current_glucose: Optional[float] = Field(90.0, gt=10.0, le=1000.0)
     hematocrit_pct: Optional[float] = Field(35.0, gt=5.0, le=80.0)
+    lactate_mmol_l: Optional[float] = Field(None, ge=0.0, le=30.0, description="Blood lactate level")
     
     # Auto-maps strings to Enums (e.g., "septic_shock" -> ClinicalDiagnosis.SEPTIC_SHOCK)
     diagnosis: ClinicalDiagnosis = Field(default=ClinicalDiagnosis.UNKNOWN)
