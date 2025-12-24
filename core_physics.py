@@ -542,22 +542,22 @@ class PediaFlowPhysicsEngine:
         # Initialize Glucose
         start_glucose = input.current_glucose if input.current_glucose else 90.0
 
+        # Default: Normal/Dry
+        # Note: Do NOT put commas at the end of these lines!
+        start_pcwp = 4.0
+        start_p_inter = -2.0 if deficit_factor > 0 else 0.0
+        
+        # If signs of Respiratory Distress / Heart Failure, assume higher baseline pressures
+        if input.sp_o2_percent < 90 or input.respiratory_rate_bpm > 50:
+             start_pcwp = 15.0 # Elevated filling pressure
+             start_p_inter = 4.0 # Verging on edema (Threshold is 5.0)
+
         return SimulationState(
             time_minutes=0.0,
             
             v_blood_current_l=current_v_blood,
             v_interstitial_current_l=max(current_v_inter, 0.1),
             v_intracellular_current_l=v_icf_normal, 
-
-            # Default: Normal/Dry
-            start_pcwp = 4.0
-            start_p_inter = -2.0 if deficit_factor > 0 else 0.0
-            
-            # If signs of Respiratory Distress / Heart Failure, assume higher baseline pressures
-            if input.sp_o2_percent < 90 or input.respiratory_rate_bpm > 50:
-                 start_pcwp = 15.0 # Elevated filling pressure
-                 start_p_inter = 4.0 # Verging on edema (Threshold is 5.0)
-            #
         
             # Pressures (Estimated from Vitals for T=0)
             map_mmHg=map_est,
