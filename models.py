@@ -89,6 +89,7 @@ class PatientInput:
     age_months: int          # CRITICAL: Determines Renal/Heart Maturity
     weight_kg: float         # CRITICAL: Baseline for dosage volume
     sex: str                 # 'M' or 'F' (Minor impact on TBW)
+    lactate_mmol_l: Optional[float] = None 
     
     # Critical 'Vulnerability' Inputs
     muac_cm: float           # Malnutrition Proxy (<11.5cm = SAM)
@@ -122,7 +123,6 @@ class PatientInput:
     baseline_hematocrit_pct: Optional[float] = None 
     plasma_albumin_g_dl: Optional[float] = None 
     platelet_count: Optional[int] = None
-    lactate_mmol_l: Optional[float] = None
     
     # REQUIRED FOR TRANSFUSION: To calculate Volume = Weight * (Target - Current) * 4
     target_hemoglobin_g_dl: Optional[float] = 10.0 
