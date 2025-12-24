@@ -89,7 +89,6 @@ class PatientInput:
     age_months: int          # CRITICAL: Determines Renal/Heart Maturity
     weight_kg: float         # CRITICAL: Baseline for dosage volume
     sex: str                 # 'M' or 'F' (Minor impact on TBW)
-    lactate_mmol_l: Optional[float] = None 
     
     # Critical 'Vulnerability' Inputs
     muac_cm: float           # Malnutrition Proxy (<11.5cm = SAM)
@@ -106,6 +105,14 @@ class PatientInput:
     respiratory_rate_bpm: int
 
     diastolic_bp: Optional[int] = None # [NEW] Optional for better MAP
+    lactate_mmol_l: Optional[float] = None 
+    # Illness Timeline (Critical for Dengue Sigma)
+    illness_day: Optional[int] = None 
+
+    # REQUIRED FOR DENGUE: To detect "Rising Hct" (Leak Indicator)
+    baseline_hematocrit_pct: Optional[float] = None 
+    plasma_albumin_g_dl: Optional[float] = None 
+    platelet_count: Optional[int] = None
     
     # Lab / Dynamic Inputs (Optional but high value)
     current_sodium: float = 140.0 # mEq/L (Critical for Cerebral Edema logic)
@@ -115,14 +122,6 @@ class PatientInput:
     # Context
     diagnosis: ClinicalDiagnosis = ClinicalDiagnosis.UNKNOWN
     iv_set_available: IVSetType = IVSetType.MICRO_DRIP
-
-    # Illness Timeline (Critical for Dengue Sigma)
-    illness_day: Optional[int] = None 
-
-    # REQUIRED FOR DENGUE: To detect "Rising Hct" (Leak Indicator)
-    baseline_hematocrit_pct: Optional[float] = None 
-    plasma_albumin_g_dl: Optional[float] = None 
-    platelet_count: Optional[int] = None
     
     # REQUIRED FOR TRANSFUSION: To calculate Volume = Weight * (Target - Current) * 4
     target_hemoglobin_g_dl: Optional[float] = 10.0 
