@@ -206,7 +206,7 @@ class TestClinicalScenarios(unittest.TestCase):
     def test_08_frank_starling_plateau(self):
         """[CARDIAC] Does Cardiac Output plateau after optimal preload?"""
         print("\nTEST 8: Frank-Starling Law")
-        data = self.create_base_patient(ClinicalDiagnosis.SEPTIC_SHOCK)
+        data = self.create_base_patient(ClinicalDiagnosis.SEVERE_DEHYDRATION)
         twin = PediaFlowPhysicsEngine.create_digital_twin(data)
         
         # Step 1: Give 100ml (Should boost BP significantly)
@@ -224,7 +224,9 @@ class TestClinicalScenarios(unittest.TestCase):
         print(f"  > 1st Bolus Rise: +{bp_rise_1} mmHg")
         print(f"  > 2nd Bolus Rise: +{bp_rise_2} mmHg")
         
-        self.assertLess(bp_rise_2, bp_rise_1, "Heart did not show diminishing returns (Starling Plateau)")
+        self.assertLess(bp_rise_2, bp_rise_1, "Heart did not show diminishing returns")
+        self.assertGreater(bp_rise_1, 5, "First bolus failed to raise BP")
+        
 
 if __name__ == '__main__':
     unittest.main()
