@@ -7,7 +7,18 @@ class SafetySupervisor:
                         input: PatientInput) -> SafetyAlerts:
         alerts = SafetyAlerts()
 
-        # Cerebral Edema Risk (Tonicity Mismatch)
+        # 1. Pulmonary Edema Risk
+        # Stop if interstitial pressure indicates wet lungs (>5 mmHg)
+        if state.p_interstitial_mmHg > 5.0:
+            alerts.risk_pulmonary_edema = True
+            
+        # 2. Volume Overload Risk
+        # Warning if total fluid exceeds 40ml/kg (standard limit before re-eval)
+        safe_limit = input.weight_kg * 40.0 
+        if state.total_volume_infused_ml > safe_limit:
+            alerts.risk_volume_overload = True
+
+        # 3. Cerebral Edema Risk (Tonicity Mismatch)
         # Calculate Sodium Concentration of the fluid given so far
         if state.total_volume_infused_ml > 0:
             fluid_na_conc = (state.total_sodium_load_meq * 1000.0) / state.total_volume_infused_ml
@@ -31,11 +42,6 @@ class SafetySupervisor:
         if params.cardiac_contractility < 0.6 or is_sam_clinical:
             alerts.sam_heart_warning = True
 
-        # 4. Anemia / Hemodilution Warning (Secondary check)
-        # If not critical (<5) but low (<7), warn.
-        if state.current_hematocrit_dynamic < 21.0: # Approx Hb 7
-            alerts.anemia_dilution_warning = True
-
         # 5. Ketoacidosis / Hyperglycemia Risk
         # Scenario A: Simple Hyperglycemia (Primary Screen for DKA) - Catches Test F
         is_dka_risk = (input.current_glucose and input.current_glucose > 250.0)
@@ -56,5 +62,17 @@ class SafetySupervisor:
         if input.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
             if state.current_hematocrit_dynamic > input.hematocrit_pct:
                 alerts.dengue_leak_warning = True
+
+        # 7. Refractory Shock (Hydrocortisone) ---
+        # Trigger if Lactate is critically high (>7) implying tissue failure
+        # OR if BP remains low despite treatment (Refractory)
+        if input.lactate_mmol_l and input.lactate_mmol_l > 7.0:
+             alerts.hydrocortisone_needed = True
+        
+        # 8. Anemia Dilution Warning ---
+        # Trigger if Hb is in the "Danger Zone" (5-7) where fluids might dilute it < 5.
+        # (If it was < 4, the Protocol Engine would have already switched to Blood)
+        if 4.0 < input.hemoglobin_g_dl < 7.0:
+             alerts.anemia_dilution_warning = True
             
         return alerts
