@@ -47,12 +47,34 @@ def generate_prescription(data: dict) -> EngineOutput:
     # Calculates volume and physical hardware settings (drops/min)
     rx = PrescriptionEngine.generate_bolus(twin.patient, fluid)
     
-    # 4. Simulate
-    # Fast-forward time to check for edema/overload risks
+    # 4. Simulate Phase A: The Bolus
     sim_res = PediaFlowPhysicsEngine.run_simulation(
         twin.initial_state, twin.physics_params, fluid, 
         rx['volume_ml'], rx['duration_min'], return_series=True
     )
+
+    # 4b. Simulate Phase B: Observation (The "What happens next?" phase)
+    # If the bolus finishes early (e.g. 20 mins), simulate the rest of the hour at 0 ml/hr
+    if rx['duration_min'] < 60 and sim_res['success']:
+        remaining_time = 60 - rx['duration_min']
+        
+        # Run again from the end state, with ZERO fluid
+        observation = PediaFlowPhysicsEngine.run_simulation(
+            sim_res['final_state'], twin.physics_params, fluid, 
+            volume_ml=0, duration_min=remaining_time, return_series=True
+        )
+        
+        # Stitch the timelines together for the frontend
+        if 'trajectory' in sim_res and 'trajectory' in observation:
+            last_time = sim_res['trajectory'][-1]['time']
+            for point in observation['trajectory']:
+                # Create a new point to avoid mutating the original reference
+                new_point = point.copy()
+                new_point['time'] += last_time
+                sim_res['trajectory'].append(new_point)
+            
+            # Update the final state to be the TRUE end of the hour
+            sim_res['final_state'] = observation['final_state']
     
     # 5. Check Safety
     # Analyze the final state of the simulation for physiological limits
