@@ -10,7 +10,7 @@ interface Props {
   patient: PatientInput;
 }
 
-// Helper: Convert API String Alerts to Boolean Flags for the Visualizer
+// Helper: Convert API Alert Strings to Flags for Visualizer
 const mapAlertsToFlags = (alertStrings: string[]): SafetyAlerts => {
   const s = new Set(alertStrings.join(' ').toLowerCase());
   return {
@@ -27,9 +27,8 @@ const mapAlertsToFlags = (alertStrings: string[]): SafetyAlerts => {
 };
 
 export const SimulationPanel: React.FC<Props> = ({ patient }) => {
-  // Local State for the "What-If" inputs
   const [fluid, setFluid] = useState<string>(FluidType.RL);
-  const [volume, setVolume] = useState<number>(Math.round(patient.weight_kg * 20)); // Default 20ml/kg
+  const [volume, setVolume] = useState<number>(Math.round(patient.weight_kg * 20));
   const [duration, setDuration] = useState<number>(60);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<SimulationResponse | null>(null);
@@ -62,16 +61,15 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
           "What-If" Physics Simulator
         </h3>
         <span className="text-xs bg-blue-900/50 text-blue-200 px-2 py-1 rounded border border-blue-800">
-           Experimental Mode
+           Experimental
         </span>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12">
         
-        {/* CONTROLS (Left Side) */}
+        {/* CONTROLS */}
         <div className="lg:col-span-4 p-6 space-y-8 border-r border-slate-700 bg-slate-800/20">
           
-          {/* Fluid Selector */}
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fluid Type</label>
             <select 
@@ -79,16 +77,15 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
               onChange={(e) => setFluid(e.target.value)}
               className="w-full bg-slate-800 border border-slate-600 rounded p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option value={FluidType.RL}>Ringer Lactate (Balanced)</option>
+              <option value={FluidType.RL}>Ringer Lactate</option>
               <option value={FluidType.NS}>Normal Saline (0.9%)</option>
-              <option value={FluidType.D5_NS}>D5 Normal Saline (Hypertonic)</option>
-              <option value={FluidType.HALF_NS}>1/2 Normal Saline (Hypotonic)</option>
-              <option value={FluidType.COLLOID_ALBUMIN}>Albumin 5% (Colloid)</option>
+              <option value={FluidType.D5_NS}>D5 Normal Saline</option>
+              <option value={FluidType.HALF_NS}>1/2 Normal Saline</option>
+              <option value={FluidType.COLLOID_ALBUMIN}>Albumin 5%</option>
               <option value={FluidType.PRBC}>Packed Red Blood Cells</option>
             </select>
           </div>
 
-          {/* Volume Slider */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
                <label className="text-slate-400 font-bold">Volume</label>
@@ -103,55 +100,34 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
               onChange={(e) => setVolume(Number(e.target.value))}
               className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
-            <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Low (5ml/kg)</span>
-              <span>Massive (60ml/kg)</span>
-            </div>
           </div>
 
-          {/* Duration Slider */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm">
                <label className="text-slate-400 font-bold">Duration</label>
                <span className="text-blue-400 font-mono">{duration} mins</span>
             </div>
              <input 
-              type="range" 
-              min="5" 
-              max="240" 
-              step="5"
+              type="range" min="5" max="240" step="5"
               value={duration} 
               onChange={(e) => setDuration(Number(e.target.value))}
               className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
-             <div className="flex justify-between text-[10px] text-slate-500">
-              <span>Rapid (5m)</span>
-              <span>Slow (4hr)</span>
-            </div>
           </div>
 
-          {/* Action Button */}
           <button 
             onClick={handleSimulate}
             disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-lg flex justify-center items-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-lg flex justify-center items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
           >
-            {loading ? (
-              <span className="animate-spin h-5 w-5 border-2 border-white/30 border-t-white rounded-full"></span>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-current" /> Run Simulation
-              </>
-            )}
+            {loading ? <span className="animate-spin h-5 w-5 border-2 border-white/30 border-t-white rounded-full"></span> : <><Play className="w-4 h-4 fill-current" /> Run Simulation</>}
           </button>
         </div>
 
-        {/* RESULTS (Right Side) */}
+        {/* RESULTS */}
         <div className="lg:col-span-8 p-6 bg-slate-900 min-h-[400px]">
           {result ? (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              
-              {/* Summary Banner */}
               <div className="grid grid-cols-2 gap-4">
                  <div className="bg-slate-800 p-3 rounded border border-slate-700">
                     <div className="text-xs text-slate-500 uppercase">BP Response</div>
@@ -167,18 +143,14 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
                  </div>
               </div>
 
-              {/* REUSE THE CHARTS (Wrapped in light mode container for visibility) */}
               <div className="bg-white rounded-xl p-1 overflow-hidden">
                  <TrajectoryChart data={result.graph_data} />
               </div>
 
-              {/* REUSE THE TANKS (Mocking the data structure) */}
               <div className="opacity-90 hover:opacity-100 transition-opacity">
-                 {/* We mock a PrescriptionResponse object because TankVisualizer expects it */}
                  <TankVisualizer data={{
                     trajectory: result.graph_data,
                     alerts: mapAlertsToFlags(result.summary.safety_alerts),
-                    // Mocking rest of props as they are static for the visualizer
                     recommended_fluid: fluid as any,
                     bolus_volume_ml: volume,
                     infusion_duration_min: duration,
@@ -188,7 +160,6 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
                     human_readable_summary: '', generated_at: ''
                  }} />
               </div>
-
             </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-slate-600 space-y-4">
