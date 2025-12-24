@@ -70,6 +70,12 @@ class PatientRequest(BaseModel):
     current_glucose: Optional[float] = Field(90.0, gt=10.0, le=1000.0)
     hematocrit_pct: Optional[float] = Field(35.0, gt=5.0, le=80.0)
     lactate_mmol_l: Optional[float] = Field(None, ge=0.0, le=30.0, description="Blood lactate level")
+    plasma_albumin_g_dl: Optional[float] = Field(None, ge=1.0, le=6.0)
+    platelet_count: Optional[int] = Field(None, ge=1000, le=1000000)
+    baseline_hematocrit_pct: Optional[float] = Field(None, gt=5.0, le=80.0)
+    target_hemoglobin_g_dl: Optional[float] = Field(10.0, ge=4.0, le=20.0)
+    time_since_last_urine_hours: float = Field(0.0, ge=0.0, le=72.0)
+    baseline_hepatomegaly: bool = Field(False)
     
     # Auto-maps strings to Enums (e.g., "septic_shock" -> ClinicalDiagnosis.SEPTIC_SHOCK)
     diagnosis: ClinicalDiagnosis = Field(default=ClinicalDiagnosis.UNKNOWN)
