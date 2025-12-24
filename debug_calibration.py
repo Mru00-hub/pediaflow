@@ -20,7 +20,7 @@ def run_debug():
         "capillary_refill_sec": 2,
         "hemoglobin_g_dl": 12.0, "current_sodium": 135.0,
         "current_glucose": 90.0, "hematocrit_pct": 36.0,
-        "diagnosis": undifferentiated_shock,
+        "diagnosis": "undifferentiated_shock",
         "ongoing_losses_severity": OngoingLosses.NONE,
         "illness_day": 1,
         "iv_set_available": 60
