@@ -38,7 +38,7 @@ function App() {
         
         {/* LEFT COLUMN: Input */}
         <div className="lg:col-span-5 space-y-6">
-          <InputForm onSubmit={generatePlan} loading={loading} />
+          <InputForm onSubmit={handleFormSubmit} loading={loading} />
           {error && (
             <div className="bg-red-50 text-red-700 p-4 rounded-lg border border-red-200 text-sm">
               <strong>Engine Error:</strong> {error}
@@ -52,7 +52,7 @@ function App() {
             <div className="space-y-6">
                <div className="flex justify-between items-center">
                   <h3 className="text-lg font-bold text-slate-700">Simulation Result</h3>
-                  <button onClick={reset} className="text-sm text-blue-600 hover:underline">Clear</button>
+                  <button onClick={handleReset} className="text-sm text-blue-600 hover:underline">Clear</button>
                </div>
                {/* 1. Prescription Card with Metronome */}
                <PrescriptionCard data={prescription} />
