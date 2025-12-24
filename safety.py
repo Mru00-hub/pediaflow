@@ -7,6 +7,11 @@ class SafetySupervisor:
                         input: PatientInput) -> SafetyAlerts:
         alerts = SafetyAlerts()
 
+        print("\n--- SAFETY DEBUGGER ---")
+        print(f"INPUT Diagnosis: {input.diagnosis}")
+        print(f"INPUT Lactate: {input.lactate_mmol_l} (Type: {type(input.lactate_mmol_l)})")
+        print(f"INPUT Glucose: {input.current_glucose}")
+
         # 1. Pulmonary Edema Risk
         # Stop if interstitial pressure indicates wet lungs (>5 mmHg)
         if state.p_interstitial_mmHg > 5.0:
