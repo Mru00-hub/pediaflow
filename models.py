@@ -35,6 +35,7 @@ class ClinicalDiagnosis(Enum):
     DENGUE_SHOCK = "dengue_shock_syndrome"    # Capillary Leak
     SAM_DEHYDRATION = "sam_severe_malnutrition" # Vulnerable State
     UNKNOWN = "undifferentiated_shock"
+    SEVERE_ANEMIA = "severe_anemia"
 
 class ShockSeverity(Enum):
     COMPENSATED = "compensated_shock"     # BP Normal, HR High
