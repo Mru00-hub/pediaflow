@@ -1,0 +1,133 @@
+import React from 'react';
+import { PrescriptionResponse } from '../types';
+import { Heart, Brain, Activity, Droplets, AlertOctagon } from 'lucide-react';
+import clsx from 'clsx';
+import { motion } from 'framer-motion';
+
+interface Props {
+  data: PrescriptionResponse;
+}
+
+export const TankVisualizer: React.FC<Props> = ({ data }) => {
+  // 1. Extract Final State from Trajectory
+  const finalState = data.trajectory[data.trajectory.length - 1] || { map: 60, lung_water: 0 };
+  
+  // 2. Determine Organ States based on Alerts
+  const heartStatus = data.alerts.sam_heart_warning ? 'warning' : 'ok';
+  const lungStatus = data.alerts.risk_pulmonary_edema || finalState.lung_water > 4.5 ? 'danger' : 'ok';
+  const brainStatus = data.alerts.risk_cerebral_edema ? 'danger' : 'ok';
+  const kidneyStatus = data.alerts.risk_volume_overload ? 'warning' : 'ok';
+
+  // 3. Tank Levels (Normalized for visualization)
+  // Logic: MAP maps to Blood Volume Height, Lung Water maps to Interstitial Height
+  const bloodHeight = Math.min(100, Math.max(20, finalState.map)); 
+  const tissueHeight = Math.min(100, Math.max(10, finalState.lung_water * 15)); // Scale up small pressures
+  const cellHeight = 50; // Static for now unless we add cell volume to backend trajectory
+
+  return (
+    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+      <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
+         <span>Physiological Digital Twin</span>
+         <span className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500">T + {data.infusion_duration_min} min</span>
+      </h3>
+
+      {/* TOP ROW: ORGAN STATUS */}
+      <div className="grid grid-cols-4 gap-2">
+         {/* HEART */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+            heartStatus === 'warning' ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-100"
+         )}>
+            <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ duration: heartStatus === 'warning' ? 1.0 : 0.6, repeat: Infinity }}>
+                <Heart className={clsx("w-5 h-5", heartStatus === 'warning' ? "fill-amber-500 text-amber-500" : "fill-rose-500 text-rose-500")} />
+            </motion.div>
+            <span className="text-[10px] font-bold text-slate-600">Heart</span>
+         </div>
+
+         {/* LUNGS */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+            lungStatus === 'danger' ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-100"
+         )}>
+            <Activity className={clsx("w-5 h-5", lungStatus === 'danger' ? "text-red-500" : "text-blue-500")} />
+            <span className="text-[10px] font-bold text-slate-600">Lungs</span>
+         </div>
+
+         {/* BRAIN */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+            brainStatus === 'danger' ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-100"
+         )}>
+            <Brain className={clsx("w-5 h-5", brainStatus === 'danger' ? "text-red-500" : "text-slate-500")} />
+            <span className="text-[10px] font-bold text-slate-600">Brain</span>
+         </div>
+
+         {/* KIDNEYS */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+            kidneyStatus === 'warning' ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-100"
+         )}>
+            <Droplets className={clsx("w-5 h-5", kidneyStatus === 'warning' ? "text-amber-500" : "text-cyan-500")} />
+            <span className="text-[10px] font-bold text-slate-600">Renal</span>
+         </div>
+      </div>
+
+      {/* MIDDLE: THE THREE TANKS */}
+      <div className="relative h-40 w-full flex items-end justify-center gap-4 pt-6 border-b border-dashed border-slate-200 pb-2">
+         
+         {/* TANK 1: BLOOD (Intravascular) */}
+         <div className="relative w-16 h-full bg-slate-100 rounded-t-lg overflow-hidden border border-slate-300">
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[10px] text-slate-400 font-bold z-10">Blood</div>
+            <motion.div 
+                className="absolute bottom-0 w-full bg-rose-500/80"
+                initial={{ height: '20%' }}
+                animate={{ height: `${bloodHeight}%` }}
+                transition={{ duration: 1.5 }}
+            />
+            {/* Overlay Grid */}
+            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/diagmonds-light.png')] opacity-20"></div>
+         </div>
+
+         {/* ARROW: Leak */}
+         <div className="mb-8 text-slate-400">
+             <motion.div animate={{ x: [0, 5, 0] }} transition={{ repeat: Infinity, duration: 2 }}>→</motion.div>
+         </div>
+
+         {/* TANK 2: TISSUE (Interstitial) */}
+         <div className="relative w-16 h-full bg-slate-100 rounded-t-lg overflow-hidden border border-slate-300">
+            <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[10px] text-slate-400 font-bold z-10">Tissue</div>
+            <motion.div 
+                className={clsx("absolute bottom-0 w-full transition-colors duration-500", lungStatus === 'danger' ? "bg-blue-600" : "bg-blue-300/60")}
+                initial={{ height: '10%' }}
+                animate={{ height: `${tissueHeight}%` }}
+                transition={{ duration: 1.5 }}
+            />
+             {lungStatus === 'danger' && (
+                 <div className="absolute top-6 left-0 right-0 flex justify-center">
+                     <AlertOctagon className="w-6 h-6 text-red-600 fill-white animate-pulse" />
+                 </div>
+             )}
+         </div>
+
+          {/* ARROW: Osmotic */}
+          <div className="mb-8 text-slate-400">
+             <motion.div animate={{ x: [0, 5, 0] }} transition={{ repeat: Infinity, duration: 3 }}>→</motion.div>
+         </div>
+
+         {/* TANK 3: CELLS (Intracellular) */}
+         <div className="relative w-16 h-full bg-slate-100 rounded-t-lg overflow-hidden border border-slate-300">
+             <div className="absolute top-1 left-1/2 -translate-x-1/2 text-[10px] text-slate-400 font-bold z-10">Cells</div>
+             <motion.div 
+                className={clsx("absolute bottom-0 w-full transition-colors duration-500", brainStatus === 'danger' ? "bg-purple-600" : "bg-purple-300/60")}
+                initial={{ height: '50%' }}
+                animate={{ height: `${cellHeight}%` }}
+                transition={{ duration: 1.5 }}
+            />
+         </div>
+      </div>
+      
+      {/* Legend */}
+      <div className="flex justify-between text-[10px] text-slate-400">
+          <span>Vessels (Preload)</span>
+          <span>Leak (Edema)</span>
+          <span>Hydration</span>
+      </div>
+    </div>
+  );
+};
