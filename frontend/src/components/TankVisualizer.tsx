@@ -9,21 +9,39 @@ interface Props {
 }
 
 export const TankVisualizer: React.FC<Props> = ({ data }) => {
-  // 1. Extract Final State from Trajectory
-  const finalState = data.trajectory[data.trajectory.length - 1] || { map: 60, lung_water: 0 };
+  // 1. Intelligent State Extraction
+  let currentMap = 60; // Default
+  let currentLungWater = 0; // Default
+  
+  if (data.trajectory && data.trajectory.length > 0) {
+      // Normal case: Use the final prediction
+      const lastPoint = data.trajectory[data.trajectory.length - 1];
+      currentMap = lastPoint.map;
+      currentLungWater = lastPoint.lung_water;
+  } else {
+      // EDGE CASE: Safety Halt (Empty Trajectory)
+      // If we stopped for Edema, force the visual to match the danger
+      if (data.alerts.risk_pulmonary_edema) {
+          currentLungWater = 6.0; // High enough to trigger 'danger' visual (Threshold is 5)
+      }
+      // If we stopped for Volume Overload, also show high water
+      if (data.alerts.risk_volume_overload) {
+          currentLungWater = 5.5;
+      }
+  }
   
   // 2. Determine Organ States based on Alerts
   const heartStatus = data.alerts.sam_heart_warning ? 'warning' : 'ok';
-  const lungStatus = data.alerts.risk_pulmonary_edema || finalState.lung_water > 4.5 ? 'danger' : 'ok';
+  // Use the calculated lung water to drive the status
+  const lungStatus = data.alerts.risk_pulmonary_edema || currentLungWater >= 5.0 ? 'danger' : 'ok';
   const brainStatus = data.alerts.risk_cerebral_edema ? 'danger' : 'ok';
   const kidneyStatus = data.alerts.risk_volume_overload ? 'warning' : 'ok';
 
-  // 3. Tank Levels (Normalized for visualization)
-  // Logic: MAP maps to Blood Volume Height, Lung Water maps to Interstitial Height
-  const bloodHeight = Math.min(100, Math.max(20, finalState.map)); 
-  const tissueHeight = Math.min(100, Math.max(10, finalState.lung_water * 15)); // Scale up small pressures
-  const cellHeight = 50; // Static for now unless we add cell volume to backend trajectory
-
+  // 3. Tank Levels (Normalized)
+  const bloodHeight = Math.min(100, Math.max(20, currentMap)); 
+  const tissueHeight = Math.min(100, Math.max(10, currentLungWater * 15)); // 5.0 * 15 = 75% height
+  const cellHeight = 50; 
+  
   return (
     <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
       <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center justify-between">
