@@ -886,7 +886,8 @@ class PediaFlowPhysicsEngine:
                        params: PhysiologicalParams, 
                        fluid: FluidType, 
                        volume_ml: int, 
-                       duration_min: int) -> dict:
+                       duration_min: int,
+                       return_series: bool = False) -> dict:
         """
         PREDICTIVE ENGINE:
         Fast-forwards time to see what happens if we give this fluid.
@@ -909,12 +910,23 @@ class PediaFlowPhysicsEngine:
         rate_ml_hr = (volume_ml / duration_min) * 60
         
         aborted = False
+        trajectory = [] 
         
         # SIMULATION LOOP
         for t in range(int(duration_min)):
             current_state = PediaFlowPhysicsEngine.simulate_single_step(
                 current_state, params, rate_ml_hr, fluid, dt_minutes=1.0
             )
+            
+            # Record key metrics every minute
+            if return_series:
+                trajectory.append({
+                    "time": t + 1,
+                    "map": int(current_state.map_mmHg),
+                    "lung_water": round(current_state.p_interstitial_mmHg, 1),
+                    "leak_rate": round(current_state.q_leak_ml_min, 2),
+                    "hct": round(current_state.current_hematocrit_dynamic, 1)
+                })
             
             # --- SAFETY SUPERVISOR CHECKS ---
             
@@ -952,5 +964,6 @@ class PediaFlowPhysicsEngine:
             "success": not aborted,
             "triggers": triggers,
             "predicted_map_rise": int(current_state.map_mmHg - initial_state.map_mmHg),
-            "fluid_leaked_percentage": int((current_state.q_leak_ml_min / (rate_ml_hr/60))*100) if rate_ml_hr > 0 else 0
+            "fluid_leaked_percentage": int((current_state.q_leak_ml_min / (rate_ml_hr/60))*100) if rate_ml_hr > 0 else 0,
+            "trajectory": trajectory 
           }
