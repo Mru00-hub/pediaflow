@@ -883,12 +883,22 @@ class PediaFlowPhysicsEngine:
         Fast-forwards time to see what happens if we give this fluid.
         Returns the final state and any safety triggers.
         """
-        
+        # Baseline Safety Check
+        # If the patient ALREADY has high lung pressure (Wet Lungs),
+        # do not simulate a bolus. Abort immediately.
+        triggers = []
+        if initial_state.p_interstitial_mmHg >= 4.0:
+            return {
+                "final_state": initial_state,
+                "success": False,
+                "triggers": ["STOP: Pre-existing Pulmonary Congestion/Hypoxia"],
+                "predicted_map_rise": 0,
+                "fluid_leaked_percentage": 0
+            }
+            
         current_state = initial_state
         rate_ml_hr = (volume_ml / duration_min) * 60
         
-        # Safety Flags
-        triggers = []
         aborted = False
         
         # SIMULATION LOOP
