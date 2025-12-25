@@ -146,7 +146,13 @@ export const PrescriptionCard: React.FC<Props> = ({ data }) => {
                     </div>
                     <span className="text-sm font-medium text-slate-700">Expected MAP Rise</span>
                 </div>
-                <span className="font-bold text-emerald-600 text-lg">+{data.predicted_bp_rise} <span className="text-xs">mmHg</span></span>
+                <span className={clsx("text-xl font-bold", 
+                      data.predicted_bp_rise > 0 ? "text-emerald-600" : 
+                      data.predicted_bp_rise < 0 ? "text-rose-600" : "text-slate-600"
+                )}>
+                  {data.predicted_bp_rise > 0 ? "+" : ""}
+                  {data.predicted_bp_rise} mmHg
+                </span>
               </div>
 
               {/* Heart Rate Stop Trigger */}
