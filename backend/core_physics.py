@@ -553,6 +553,7 @@ class PediaFlowPhysicsEngine:
 
         # Initialize Glucose
         start_glucose = input.current_glucose if input.current_glucose else 90.0
+        start_sodium = input.current_sodium if input.current_sodium else 140.0
 
         # Default: Normal/Dry
         start_pcwp = 4.0
@@ -635,6 +636,7 @@ class PediaFlowPhysicsEngine:
             q_insensible_loss_ml_min=params.insensible_loss_ml_min,
 
             current_glucose_mg_dl=start_glucose,
+            current_sodium=start_sodium,
             cumulative_bolus_count=0,
             time_since_last_bolus_min=999.0 # Arbitrary high number
         )
