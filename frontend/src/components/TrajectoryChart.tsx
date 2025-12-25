@@ -92,7 +92,8 @@ export const TrajectoryChart: React.FC<Props> = ({ data }) => {
               <>
                 <YAxis 
                     yAxisId="left" 
-                    domain={[30, 100]} 
+                    domain={['auto', 'auto']} 
+                    padding={{ top: 20, bottom: 20 }}
                     label={{ value: 'MAP (mmHg)', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#10b981' }} 
                     tick={{ fontSize: 10, fill: '#10b981' }} 
                     width={40}
