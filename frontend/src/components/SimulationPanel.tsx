@@ -17,12 +17,12 @@ const mapAlertsToFlags = (alertStrings: string[]): SafetyAlerts => {
   return {
     risk_pulmonary_edema: s.has('pulmonary') || s.has('lung'),
     risk_volume_overload: s.has('volume') || s.has('overload'),
-    risk_cerebral_edema: s.has('cerebral') || s.has('brain'),
+    risk_cerebral_edema: s.has('cerebral') || s.has('brain') || s.has('sodium') || s.has('shift'),
     risk_hypoglycemia: s.has('hypoglycemia'),
     hydrocortisone_needed: s.has('hydrocortisone'),
-    risk_ketoacidosis: s.has('ketoacidosis'),
+    risk_ketoacidosis: s.has('ketoacidosis') || s.has('hyperglycemia') || s.has('dka'), 
     sam_heart_warning: s.has('sam') || s.has('weak heart'),
-    anemia_dilution_warning: s.has('anemia') || s.has('hemodilution'),
+    anemia_dilution_warning: s.has('anemia') || s.has('hemodilution') || s.has('dilution'),
     dengue_leak_warning: s.has('dengue') || s.has('leak')
   };
 };
