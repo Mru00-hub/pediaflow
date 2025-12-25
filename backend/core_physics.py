@@ -462,10 +462,27 @@ class PediaFlowPhysicsEngine:
         # 4. Iterative Solver to find SVR
         current_guess_svr = hemo["svr"]
         assumed_cvp = 2.0 if deficit_factor > 0 else 5.0 # Lower CVP if dehydrated
-        if input.baseline_hepatomegaly:
-             # Start with higher back-pressure due to congestion
-             assumed_cvp = max(assumed_cvp, 8.0)
+        if input.age_months < 2: rr_limit = 60
+        elif input.age_months < 12: rr_limit = 50
+        else: rr_limit = 40
+        
+        is_hypoxic = input.sp_o2_percent < 90
+        is_tachypneic = input.respiratory_rate_bpm > rr_limit
+        
+        # Only treat as "Congestion" if not clearly DKA/Severe Dehydration (Acidotic breathing)
+        # But if SpO2 is low (<90), it is ALWAYS Congestion/ARDS.
+        has_wet_lungs = is_hypoxic or (is_tachypneic and input.diagnosis != ClinicalDiagnosis.SEVERE_DEHYDRATION)
 
+        if has_wet_lungs:
+             # Force High CVP (Congestion). 
+             # 16.0 mmHg ensures that 'p_interstitial' initializes > 4.0, triggering the Safety Halt.
+             assumed_cvp = max(assumed_cvp, 16.0) 
+             warnings.missing_optimal_inputs.append("Respiratory Distress: Modeling Pulmonary Congestion")
+             
+        elif input.baseline_hepatomegaly:
+             # Start with higher back-pressure due to congestion (Lower priority than Hypoxia)
+             assumed_cvp = max(assumed_cvp, 8.0)
+            
         current_sens = afterload_sens
         
         for _ in range(15):
