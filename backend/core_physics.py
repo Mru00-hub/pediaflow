@@ -633,6 +633,8 @@ class PediaFlowPhysicsEngine:
              
              # Force the volume to match the pressure
              current_v_inter = params.v_inter_normal_l + excess_vol_liters
+        start_cvp = params.target_cvp_mmhg 
+        start_cvp = max(2.0, min(start_cvp, 15.0))
 
         return SimulationState(
             time_minutes=0.0,
@@ -643,7 +645,7 @@ class PediaFlowPhysicsEngine:
         
             # Pressures (Estimated from Vitals for T=0)
             map_mmHg=map_est,
-            cvp_mmHg=2.0 if deficit_factor > 0 else 5.0,
+            cvp_mmHg=start_cvp,
             pcwp_mmHg=start_pcwp,
             p_interstitial_mmHg=start_p_inter,
             
