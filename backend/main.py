@@ -5,7 +5,7 @@ from typing import Optional, List
 from datetime import datetime
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 # Import Data Models & Logic
 from models import (
@@ -92,7 +92,7 @@ class PatientRequest(BaseModel):
     # Audit trail
     request_timestamp: Optional[datetime] = Field(default_factory=datetime.now)
 
-    class Config:
+    model_config = ConfigDict(
         # Document an example for Swagger UI
         json_schema_extra = {
             "example": {
@@ -225,3 +225,8 @@ def simulate_outcome(request: SimulationRequest):
 def health_check():
     """K8s/AWS Health Probe"""
     return {"status": "active", "version": "1.0.0", "module": "pediaflow-kinetic-engine"}
+
+if __name__ == "__main__":
+    import uvicorn
+    # Start the server on port 8000
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
