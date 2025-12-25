@@ -20,6 +20,7 @@ from models import (
 )
 from app import generate_prescription
 from core_physics import PediaFlowPhysicsEngine
+from safety import validate_simulation_result 
 
 # --- 1. CONFIGURATION & LOGGING ---
 logging.basicConfig(level=logging.INFO)
@@ -202,6 +203,13 @@ def simulate_outcome(request: SimulationRequest):
         volume_ml=request.volume_ml,
         duration_min=request.duration_min,
         return_series=True # Tells engine to record history
+    )
+
+    validate_simulation_result(
+        initial_patient=patient,
+        final_state=result['final_state'],
+        fluid_type=request.fluid_type,
+        alerts=result['triggers'] # This appends new alerts directly to the list
     )
     
     return {
