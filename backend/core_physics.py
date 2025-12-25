@@ -465,20 +465,30 @@ class PediaFlowPhysicsEngine:
         if input.baseline_hepatomegaly:
              # Start with higher back-pressure due to congestion
              assumed_cvp = max(assumed_cvp, 8.0)
+
+        current_sens = afterload_sens
         
-        for _ in range(10):
+        for _ in range(15):
             normalized_svr = current_guess_svr / 1000.0
+            if current_guess_svr > 3000:
+                current_sens = afterload_sens * 0.5 # Heart is stiffer/stronger
+            else:
+                current_sens = afterload_sens
             denom = 1.0 + (normalized_svr - 1.0) * afterload_sens
             afterload_factor = 1.0 / max(0.5, denom) 
             
             effective_co = base_co * afterload_factor
+            safe_co = max(0.01, effective_co)
             
             # SVR = (MAP - CVP) * 80 / Flow
-            required_svr = ((start_map - assumed_cvp) * 80.0) / max(0.01, effective_co)
+            required_svr = ((start_map - assumed_cvp) * 80.0) / safe_co
             
             current_guess_svr = (current_guess_svr + required_svr) / 2.0
 
-        final_svr = max(200.0, min(current_guess_svr, 8000.0)) # Allowed higher SVR cap
+        final_svr = max(200.0, min(current_guess_svr, 20000.0)) # Allowed higher SVR cap
+        final_sens = afterload_sens
+        if final_svr > 3000:
+            final_sens = afterload_sens * 0.5
         
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
@@ -512,7 +522,7 @@ class PediaFlowPhysicsEngine:
             albumin_uncertainty_g_dl=albumin_uncertainty,
             weight_kg=input.weight_kg,
             interstitial_compliance_ml_mmhg=interstitial_compliance,
-            afterload_sensitivity=afterload_sens,
+            afterload_sensitivity=final_sens,
             baseline_capillary_pressure_mmhg=base_pc,
             optimal_preload_ml=opt_preload,
             target_cvp_mmhg=assumed_cvp
