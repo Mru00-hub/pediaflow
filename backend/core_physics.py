@@ -378,7 +378,17 @@ class PediaFlowPhysicsEngine:
 
         # Target Generation
         target_map = 55.0 if input.age_months < 12 else 65.0
-        max_hr = 160 if input.age_months > 12 else 180
+        base_max_hr = 160 if input.age_months > 12 else 180
+        fever_buffer = 0
+        
+        if input.temp_celsius > 37.5:
+            excess_temp = input.temp_celsius - 37.5
+            fever_buffer = int(excess_temp * 15) # Allow 15 bpm per degree
+            
+        max_hr = base_max_hr + fever_buffer
+        
+        # Hard Ceiling (Physiological Max) just to be safe
+        max_hr = min(max_hr, 220)
 
         stop_rr = PediaFlowPhysicsEngine._calculate_safe_rr_limit(
             input.age_months, 
@@ -411,6 +421,10 @@ class PediaFlowPhysicsEngine:
             base_pc = 25.0    
 
         opt_preload = (vols["v_blood"] * 1000.0) * 1.15
+        if input.baseline_hepatomegaly:
+             # Reduce the "Optimal Preload" (Heart can't stretch as much)
+             opt_preload *= 0.85 
+             warnings.missing_optimal_inputs.append("Hepatomegaly Detected: Reduced Volume Tolerance")
     
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
@@ -448,6 +462,9 @@ class PediaFlowPhysicsEngine:
         # 4. Iterative Solver to find SVR
         current_guess_svr = hemo["svr"]
         assumed_cvp = 2.0 if deficit_factor > 0 else 5.0 # Lower CVP if dehydrated
+        if input.baseline_hepatomegaly:
+             # Start with higher back-pressure due to congestion
+             assumed_cvp = max(assumed_cvp, 8.0)
         
         for _ in range(10):
             normalized_svr = current_guess_svr / 1000.0
@@ -693,7 +710,22 @@ class PediaFlowPhysicsEngine:
         # SVR adjusts to CVP changes (Baroreflex). 
         # If CVP drops, SVR rises to maintain MAP.
         safe_cvp = max(0.1, state.cvp_mmHg)
-        svr_dynamic = params.svr_resistance * ((params.target_cvp_mmhg / safe_cvp) ** 0.3)
+        # 1. Calculate potential vasodilation based on CVP refill
+        potential_svr = params.svr_resistance * ((params.target_cvp_mmhg / safe_cvp) ** 0.3)
+        
+        # 2. Safety Clamp with Volume Interlock:
+        # Condition A: If Hypotensive, Clamp SVR (Sympathetic Rescue).
+        # Condition B: If Normotensive BUT Heart is Empty (Compensated Cold Shock), Clamp SVR.
+        # Result: We only relax SVR when MAP is stable AND Volume is returning.
+        
+        is_hypotensive = state.map_mmHg < (params.target_map_mmhg - 5.0)
+        is_empty_heart = preload_ratio < 0.95 # Heart is less than 95% full
+        
+        if is_hypotensive or is_empty_heart: 
+             svr_dynamic = params.svr_resistance
+        else:
+             # Only allow SVR to drop if we have Pressure AND Volume
+             svr_dynamic = min(potential_svr, params.svr_resistance)
         
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
