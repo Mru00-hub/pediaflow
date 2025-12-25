@@ -690,14 +690,21 @@ class PediaFlowPhysicsEngine:
         
         # Estimate current SVR state based on Ohm's law approximation
         # SVR ~ (MAP - CVP) / Approx_CO
-        est_co = max(0.1, (params.max_cardiac_output_l_min * params.cardiac_contractility))
-        current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / est_co
+        # 1. Estimate True CO (Must include Preload Efficiency!)
+        # If we ignore preload, we overestimate CO and underestimate the required SVR.
+        true_co_est = (
+            params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * # <--- CRITICAL ADDITION
+            afterload_factor
+        )
+        true_co_est = max(0.01, true_co_est) # Safety floor
         
-        # Blend: 90% Inertia, 10% New Target
-        # This creates a smooth curve instead of a jagged step
+        # 2. Calculate current implied SVR based on physics
+        current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / true_co_est
+        
+        # 3. Blend: 90% Inertia, 10% New Target
         svr_dynamic = (current_svr_est * 0.9) + (target_svr * 0.1)
         
-        # Clamp to safe limits
+        # 4. Clamp to safe limits
         svr_dynamic = max(200.0, min(svr_dynamic, 20000.0))
         
         # Recalculate CO and MAP
