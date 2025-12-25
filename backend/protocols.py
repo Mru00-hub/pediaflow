@@ -9,10 +9,19 @@ class FluidSelector:
         # 2. Hypoglycemia Priority (Decoupled from SAM)
         # Any child with Glucose < 54 mg/dL needs Dextrose immediately.
         # We also keep the < 70 threshold if they are SAM, as they are more vulnerable.
-        is_hypoglycemic = state.current_glucose_mg_dl < 54.0
-        is_sam_risk = input.muac_cm < 11.5 and state.current_glucose_mg_dl < 70.0
+        threshold = 54.0 # Base threshold for healthy children
         
-        if is_hypoglycemic or is_sam_risk:
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+             # PREDICTIVE: Sepsis burns sugar fast. 
+             # We treat < 90 as "At Risk" to prevent crashing during simulation.
+             threshold = 90.0 
+        elif input.muac_cm < 11.5:
+             # SAM children have low glycogen stores.
+             threshold = 70.0 
+             
+        is_hypoglycemic = state.current_glucose_mg_dl < threshold
+        
+        if is_hypoglycemic:
             return FluidType.D5_NS
         # 3. Dengue Shock: Critical Phase Refractory
         # If they are in day 4-6 and have already had boluses, consider Colloid
@@ -32,6 +41,24 @@ class PrescriptionEngine:
         # SAM Protocol: Slower, smaller volume (10ml/kg over 1 hr)
         is_sam = input.muac_cm < 11.5
         diagnosis = input.diagnosis
+
+        if fluid == FluidType.D5_NS:
+             # Check the actual glucose to decide dose size
+             # (Handle None safely by defaulting to 90)
+             current_g = input.current_glucose if input.current_glucose is not None else 90.0
+             
+             if current_g < 54.0:
+                 # A. CRITICAL HYPOGLYCEMIA (< 54 mg/dL)
+                 # Priority: Immediate Sugar Load + Volume.
+                 # Dose: Full Shock Bolus (10 ml/kg)
+                 volume = int(input.weight_kg * 10)
+                 duration = 30 # Slower than saline to prevent rapid osmotic shift
+             else:
+                 # B. PROACTIVE BUFFER (54 - 90 mg/dL)
+                 # Priority: Prevent crash, but don't cause Hyperglycemia/Overload.
+                 # Dose: Half Bolus (5 ml/kg)
+                 volume = int(input.weight_kg * 5)
+                 duration = 30
 
         # 1. Specific Dosing for Blood Products
         if fluid == FluidType.PRBC:
