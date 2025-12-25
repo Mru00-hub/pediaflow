@@ -554,6 +554,7 @@ class PediaFlowPhysicsEngine:
         # Initialize Glucose
         start_glucose = input.current_glucose if input.current_glucose else 90.0
         start_sodium = input.current_sodium if input.current_sodium else 140.0
+        start_hb = input.hemoglobin_g_dl
 
         # Default: Normal/Dry
         start_pcwp = 4.0
@@ -637,6 +638,7 @@ class PediaFlowPhysicsEngine:
 
             current_glucose_mg_dl=start_glucose,
             current_sodium=start_sodium,
+            current_hemoglobin=start_hb,
             cumulative_bolus_count=0,
             time_since_last_bolus_min=999.0 # Arbitrary high number
         )
@@ -785,6 +787,7 @@ class PediaFlowPhysicsEngine:
         
         # 1. Get Instantaneous Fluxes
         fluxes = PediaFlowPhysicsEngine._calculate_derivatives(state, params, fluid_props, rate_min)
+        q_urine_l_min = fluxes['q_urine'] / 1000.0
         
         # 2. Update Volumes (Mass Balance)
         # Blood gains infusion (vascular portion) + lymph, loses leak + urine
@@ -832,6 +835,7 @@ class PediaFlowPhysicsEngine:
         safe_v_blood = max(new_v_blood, 0.1)
         new_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / safe_v_blood
         new_hct = max(5.0, min(new_hct, 70.0))
+        new_hb = (state.v_blood_current_l * state.current_hemoglobin) / safe_v_blood
                                  
         # --- GLUCOSE DYNAMICS ---
         
@@ -897,6 +901,7 @@ class PediaFlowPhysicsEngine:
             current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
             current_glucose_mg_dl=new_glucose,
             current_sodium=new_sodium,
+            current_hemoglobin=new_hb,
             
             # Pass-throughs
             q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
