@@ -998,6 +998,12 @@ class PediaFlowPhysicsEngine:
                     "map": int(current_state.map_mmHg),
                     "lung_water": round(current_state.p_interstitial_mmHg, 1),
                     "leak_rate": round(current_state.q_leak_ml_min, 2),
+                    "urine_output": round(current_state.q_urine_ml_min, 2),
+                    # Labs / Metabolics (NEW)
+                    "sodium": round(current_state.current_sodium, 1),
+                    "potassium": round(current_state.current_potassium, 2), # Critical for Renal
+                    "glucose": int(current_state.current_glucose_mg_dl),
+                    "hb": round(current_state.current_hemoglobin, 1),
                     "hct": round(current_state.current_hematocrit_dynamic, 1)
                 })
             
