@@ -14,9 +14,12 @@ from models import (
     ClinicalDiagnosis, 
     OngoingLosses, 
     FluidType, 
-    IVSetType
+    IVSetType,
+    PatientInput,       # <--- Added
+    CalculationWarnings
 )
 from app import generate_prescription
+from core_physics import PediaFlowPhysicsEngin
 
 # --- 1. CONFIGURATION & LOGGING ---
 logging.basicConfig(level=logging.INFO)
