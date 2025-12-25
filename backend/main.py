@@ -183,6 +183,8 @@ def simulate_outcome(request: SimulationRequest):
     """
     # 1. Convert API Request -> Internal Model
     patient_data = request.patient.dict()
+    if 'request_timestamp' in patient_data:
+        del patient_data['request_timestamp']
     patient = PatientInput(**patient_data)
     
     # 2. Initialize Physics
