@@ -19,7 +19,7 @@ from models import (
     CalculationWarnings
 )
 from app import generate_prescription
-from core_physics import PediaFlowPhysicsEngin
+from core_physics import PediaFlowPhysicsEngine
 
 # --- 1. CONFIGURATION & LOGGING ---
 logging.basicConfig(level=logging.INFO)
