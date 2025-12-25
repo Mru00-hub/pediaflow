@@ -693,17 +693,7 @@ class PediaFlowPhysicsEngine:
         # SVR adjusts to CVP changes (Baroreflex). 
         # If CVP drops, SVR rises to maintain MAP.
         safe_cvp = max(0.1, state.cvp_mmHg)
-        # 1. Calculate potential vasodilation based on CVP refill (The original logic)
-        potential_svr = params.svr_resistance * ((params.target_cvp_mmhg / safe_cvp) ** 0.3)
-        
-        # 2. Safety Clamp:
-        # If the patient is still hypotensive (MAP < Target), ignore the CVP trigger 
-        # and maintain the baseline high resistance (Sympathetic Clamp).
-        if state.map_mmHg < (params.target_map_mmhg - 5.0): # 5mmHg buffer
-             svr_dynamic = params.svr_resistance
-        else:
-             # Only allow SVR to drop if we have actually restored pressure
-             svr_dynamic = min(potential_svr, params.svr_resistance)
+        svr_dynamic = params.svr_resistance * ((params.target_cvp_mmhg / safe_cvp) ** 0.3)
         
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
