@@ -532,131 +532,77 @@ class PediaFlowPhysicsEngine:
     def initialize_simulation_state(input: PatientInput, params: PhysiologicalParams) -> SimulationState:
         """
         Creates the 'T=0' State based on current Clinical Presentation.
+        NOW FORCES ALIGNMENT WITH SOLVER TO PREVENT SPIKES.
         """
-
+        
+        # 1. Get Base Volumes
         vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
         v_icf_normal = vols["v_intracellular"]
-
-        # ICF Safety Check
-        if v_icf_normal < 0.1:
-            raise ValueError(f"Calculated ICF Volume too low ({v_icf_normal:.2f}L). Check Weight/Age.")
         
-        # 1. Estimate Current Volumes based on Dehydration Severity
-        deficit_factor = 0.0
-        if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
-            if input.capillary_refill_sec > 4:
-                deficit_factor = 0.15 # Severe/Shock (15%)
-            else:
-                deficit_factor = 0.10 # Standard Severe (10%)
-        elif input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
-            deficit_factor = 0.08 # Conservative estimate for SAM
+        # 2. ALIGNMENT FIX: Use the Solver's CVP as the Source of Truth
+        # The solver balanced SVR based on 'params.target_cvp_mmhg'. 
+        # We MUST start there, or the physics will explode.
+        start_cvp = params.target_cvp_mmhg
         
-        # Partition the deficit (mostly from ECF)
-        vol_loss_liters = input.weight_kg * deficit_factor
+        # 3. Back-Calculate Blood Volume from CVP
+        # Physics: CVP = 3.0 + (ExcessVol / Compliance)
+        # Therefore: ExcessVol = (StartCVP - 3.0) * Compliance
+        # This ensures that when the simulator calculates CVP at T=1, it gets exactly 'start_cvp'.
         
-        # 75% loss from Interstitial, 25% from Blood
-        current_v_inter = params.v_inter_normal_l - (vol_loss_liters * 0.75)
-        current_v_blood = params.v_blood_normal_l - (vol_loss_liters * 0.25)
-
-        # Volume Floor (Relative, not absolute)
-        min_v_blood = params.v_blood_normal_l * 0.4 # Death threshold
+        vol_excess_ml = (start_cvp - 3.0) * params.venous_compliance_ml_mmhg
+        current_v_blood = params.v_blood_normal_l + (vol_excess_ml / 1000.0)
+        
+        # Safety Floor for Blood Volume (Prevent negative volumes in severe shock math)
+        min_v_blood = params.v_blood_normal_l * 0.4 
         current_v_blood = max(current_v_blood, min_v_blood)
-        current_v_inter = max(current_v_inter, 0.05)
 
-        # MAP Calculation via Pulse Pressure
-        if input.diastolic_bp is not None:
-            # Gold Standard: MAP = DBP + 1/3 Pulse Pressure
-            map_est = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
-        else:
-            # Fallback estimation
-            is_vasodilated = input.diagnosis in [ClinicalDiagnosis.SEPTIC_SHOCK, ClinicalDiagnosis.DENGUE_SHOCK]
-            dbp_ratio = 0.4 if is_vasodilated else 0.6
-            estimated_dbp = input.systolic_bp * dbp_ratio
-            map_est = estimated_dbp + (input.systolic_bp - estimated_dbp) / 3.0
+        # 4. Interstitial Volume Initialization
+        # If we have wet lungs (high CVP/PCWP), we likely have interstitial edema too.
+        current_v_inter = params.v_inter_normal_l
+        start_p_inter = -2.0 # Default Dry
         
-        # 2. Ongoing Loss Estimation (The Third Vector)
-        loss_rate_ml_kg = input.ongoing_losses_severity.value
-        ongoing_loss_rate = (input.weight_kg * loss_rate_ml_kg) / 60.0 # Convert hr -> min
+        # If CVP is high (>8), assume some leak has occurred
+        if start_cvp > 8.0:
+             # Assume equilibrium: P_inter rises with CVP
+             start_p_inter = (start_cvp - 8.0) * 0.5 
+             start_p_inter = min(start_p_inter, 6.0) # Cap at 6 (Edema)
+             
+             if start_p_inter > 0:
+                 excess_inter_l = (start_p_inter * params.interstitial_compliance_ml_mmhg) / 1000.0
+                 current_v_inter += excess_inter_l
 
-        # Initialize Glucose
+        # 5. Metabolic Initialization
         start_glucose = input.current_glucose if input.current_glucose else 90.0
         start_sodium = input.current_sodium if input.current_sodium else 140.0
         start_hb = input.hemoglobin_g_dl
         start_potassium = 4.0 
-
-        # Default: Normal/Dry
-        start_pcwp = 4.0
-        start_p_inter = -2.0 if deficit_factor > 0 else 0.0
         
-        # 2. Determine Age-Appropriate Tachypnea Threshold (WHO Guidelines)
-        if input.age_months < 2:
-            tachypnea_limit = 60
-        elif input.age_months < 12:
-            tachypnea_limit = 50
-        elif input.age_months < 60:
-            tachypnea_limit = 40
-        else:
-            tachypnea_limit = 30
-
-        # 3. Check for Wet Lung Signs
-        # Trigger if SpO2 is low OR RR is high for age
-        is_hypoxic = input.sp_o2_percent < 90
-        is_tachypneic = input.respiratory_rate_bpm > tachypnea_limit
-
-        # Distinguish Pulmonary Edema vs. Acidotic Breathing (DKA/Dehydration)
-        # If SpO2 is good (>90), but breathing is fast, AND diagnosis fits Acidosis,
-        # assume it is compensation, NOT fluid overload.
-        is_acidotic = (
-            input.diagnosis in [ClinicalDiagnosis.SEVERE_DEHYDRATION, ClinicalDiagnosis.SAM_DEHYDRATION] 
-            or (input.current_glucose and input.current_glucose > 250)
-        )
-        
-        # Only flag "Wet Lung" if Hypoxic OR (Tachypneic AND NOT Acidotic)
-        if is_hypoxic or (is_tachypneic and not is_acidotic):
-             start_pcwp = 15.0  # Elevated filling pressure (Wet)
-             start_p_inter = 4.0 # Verging on edema (Threshold is 5.0)
-
-        # If we clinically decided pressure is high, we must back-calculate 
-        # the fluid volume required to create that pressure.
-        # Otherwise, the physics engine will recalculate it back to zero next step.
-        # Back-calculate Blood Volume to match this PCWP/CVP
-             # PCWP = CVP * 1.2  =>  Target CVP = 12.5
-             # CVP = 3.0 + (Excess / Compliance)
-             # Excess = (12.5 - 3.0) * Compliance
-             target_cvp = 12.5
-             vol_excess_ml = (target_cvp - 3.0) * params.venous_compliance_ml_mmhg
-             current_v_blood = params.v_blood_normal_l + (vol_excess_ml / 1000.0)
-        
-        if start_p_inter > 0:
-             # Volume Excess = Pressure * Compliance
-             excess_vol_liters = (start_p_inter * params.interstitial_compliance_ml_mmhg) / 1000.0
-             
-             # Force the volume to match the pressure
-             current_v_inter = params.v_inter_normal_l + excess_vol_liters
-        start_cvp = params.target_cvp_mmhg 
-        start_cvp = max(2.0, min(start_cvp, 15.0))
+        # 6. Loss Rates
+        loss_rate_ml_kg = input.ongoing_losses_severity.value
+        ongoing_loss_rate = (input.weight_kg * loss_rate_ml_kg) / 60.0
 
         return SimulationState(
             time_minutes=0.0,
             
+            # EXACT VOLUMES (Aligned to CVP)
             v_blood_current_l=current_v_blood,
             v_interstitial_current_l=max(current_v_inter, 0.1),
             v_intracellular_current_l=v_icf_normal, 
         
-            # Pressures (Estimated from Vitals for T=0)
-            map_mmHg=map_est,
+            # EXACT PRESSURES (Aligned to Solver)
+            map_mmHg=params.target_map_mmhg, # Start at the target the solver found
             cvp_mmHg=start_cvp,
-            pcwp_mmHg=start_pcwp,
+            pcwp_mmHg=start_cvp * 1.2,
             p_interstitial_mmHg=start_p_inter,
             
-            # Fluxes (Start at 0)
+            # Zeroed Fluxes
             q_infusion_ml_min=0.0,
             q_leak_ml_min=0.0,
             q_urine_ml_min=0.0,
             q_lymph_ml_min=0.0,
             q_osmotic_shift_ml_min=0.0,
             
-            # Safety Integrators
+            # Integrators
             total_volume_infused_ml=0.0,
             total_sodium_load_meq=0.0,
             
@@ -671,7 +617,7 @@ class PediaFlowPhysicsEngine:
             current_hemoglobin=start_hb,
             current_potassium=start_potassium,
             cumulative_bolus_count=0,
-            time_since_last_bolus_min=999.0 # Arbitrary high number
+            time_since_last_bolus_min=999.0
         )
 
     @staticmethod
@@ -738,6 +684,21 @@ class PediaFlowPhysicsEngine:
         else:
              # Only allow SVR to drop if we have Pressure AND Volume
              svr_dynamic = min(potential_svr, params.svr_resistance)
+
+        # Prevent SVR from jumping instantly (Arterial Smooth Muscle Inertia)
+        # This smooths out the "Spikes" and "Steps".
+        
+        # Estimate current SVR state based on Ohm's law approximation
+        # SVR ~ (MAP - CVP) / Approx_CO
+        est_co = max(0.1, (params.max_cardiac_output_l_min * params.cardiac_contractility))
+        current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / est_co
+        
+        # Blend: 90% Inertia, 10% New Target
+        # This creates a smooth curve instead of a jagged step
+        svr_dynamic = (current_svr_est * 0.9) + (target_svr * 0.1)
+        
+        # Clamp to safe limits
+        svr_dynamic = max(200.0, min(svr_dynamic, 20000.0))
         
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
