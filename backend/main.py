@@ -103,6 +103,7 @@ class PatientRequest(BaseModel):
                 "current_glucose": 85.0
             }
         }
+    )
 
 # --- 3. EXPLICIT RESPONSE SCHEMA (The Contract) ---
 # We define a Pydantic model mirroring EngineOutput to generate proper API docs
