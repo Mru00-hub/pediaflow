@@ -1,6 +1,6 @@
 import React from 'react';
 import type { PrescriptionResponse } from '../types';
-import { Heart, Brain, Activity, Droplets, AlertOctagon } from 'lucide-react';
+import { HeartPulse, Wind, Brain, Droplets, AlertOctagon } from 'lucide-react';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
 
@@ -51,38 +51,50 @@ export const TankVisualizer: React.FC<Props> = ({ data }) => {
 
       {/* TOP ROW: ORGAN STATUS */}
       <div className="grid grid-cols-4 gap-2">
-         {/* HEART */}
-         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+         {/* HEART: Contractility/Rate */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors min-h-[80px]", 
             heartStatus === 'warning' ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-100"
          )}>
             <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ duration: heartStatus === 'warning' ? 1.0 : 0.6, repeat: Infinity }}>
-                <Heart className={clsx("w-5 h-5", heartStatus === 'warning' ? "fill-amber-500 text-amber-500" : "fill-rose-500 text-rose-500")} />
+                <HeartPulse className={clsx("w-5 h-5", heartStatus === 'warning' ? "text-amber-500" : "text-rose-500")} />
             </motion.div>
-            <span className="text-[10px] font-bold text-slate-600">Heart</span>
+            <div className="text-center">
+                <span className="block text-[10px] font-bold text-slate-700">Heart</span>
+                <span className="block text-[8px] text-slate-400 leading-tight">Contractility</span>
+            </div>
          </div>
 
-         {/* LUNGS */}
-         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+         {/* LUNGS: Wetness/Airflow */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors min-h-[80px]", 
             lungStatus === 'danger' ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-100"
          )}>
-            <Activity className={clsx("w-5 h-5", lungStatus === 'danger' ? "text-red-500" : "text-blue-500")} />
-            <span className="text-[10px] font-bold text-slate-600">Lungs</span>
+            <Wind className={clsx("w-5 h-5", lungStatus === 'danger' ? "text-red-500" : "text-blue-500")} />
+            <div className="text-center">
+                <span className="block text-[10px] font-bold text-slate-700">Lungs</span>
+                <span className="block text-[8px] text-slate-400 leading-tight">Fluid / Edema</span>
+            </div>
          </div>
 
-         {/* BRAIN */}
-         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+         {/* BRAIN: Sodium/Swelling */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors min-h-[80px]", 
             brainStatus === 'danger' ? "bg-red-50 border-red-200" : "bg-slate-50 border-slate-100"
          )}>
             <Brain className={clsx("w-5 h-5", brainStatus === 'danger' ? "text-red-500" : "text-slate-500")} />
-            <span className="text-[10px] font-bold text-slate-600">Brain</span>
+            <div className="text-center">
+                <span className="block text-[10px] font-bold text-slate-700">Brain</span>
+                <span className="block text-[8px] text-slate-400 leading-tight">Sodium Shift</span>
+            </div>
          </div>
 
-         {/* KIDNEYS */}
-         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors", 
+         {/* RENAL: Output/Overload */}
+         <div className={clsx("p-2 rounded-lg border flex flex-col items-center justify-center gap-1 transition-colors min-h-[80px]", 
             kidneyStatus === 'warning' ? "bg-amber-50 border-amber-200" : "bg-slate-50 border-slate-100"
          )}>
             <Droplets className={clsx("w-5 h-5", kidneyStatus === 'warning' ? "text-amber-500" : "text-cyan-500")} />
-            <span className="text-[10px] font-bold text-slate-600">Renal</span>
+            <div className="text-center">
+                <span className="block text-[10px] font-bold text-slate-700">Renal</span>
+                <span className="block text-[8px] text-slate-400 leading-tight">Perf / Load</span>
+            </div>
          </div>
       </div>
 
