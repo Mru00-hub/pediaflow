@@ -680,11 +680,11 @@ class PediaFlowPhysicsEngine:
         is_empty_heart = preload_ratio < 0.95 # Heart is less than 95% full
         
         if is_hypotensive or is_empty_heart: 
-             svr_dynamic = params.svr_resistance
+             target_svr = params.svr_resistance
         else:
              # Only allow SVR to drop if we have Pressure AND Volume
-             svr_dynamic = min(potential_svr, params.svr_resistance)
-
+             target_svr = min(potential_svr, params.svr_resistance)
+            
         # Prevent SVR from jumping instantly (Arterial Smooth Muscle Inertia)
         # This smooths out the "Spikes" and "Steps".
         
