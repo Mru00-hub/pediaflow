@@ -2,7 +2,7 @@
 import type { PatientInput, PrescriptionResponse, SimulationRequest, SimulationResponse } from './types';
 
 // Default to localhost for development
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = 'https://potential-system-v6wr4jjv5j962pwrw-8000.app.github.dev'; 
 
 class PediaFlowClient {
   
