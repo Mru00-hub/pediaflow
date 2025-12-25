@@ -1,7 +1,11 @@
 # safety.py
-from models import SimulationState, PhysiologicalParams, PatientInput, SafetyAlerts, ClinicalDiagnosis
+from models import ( SimulationState, PhysiologicalParams, PatientInput, SafetyAlerts, ClinicalDiagnosis, FluidType)
 
 class SafetySupervisor:
+    """
+    Real-time safety checks used by the Main Protocol Engine.
+    Returns a SafetyAlerts object (Flags).
+    """
     @staticmethod
     def check_real_time(state: SimulationState, params: PhysiologicalParams, 
                         input: PatientInput) -> SafetyAlerts:
@@ -96,3 +100,84 @@ class SafetySupervisor:
              alerts.anemia_dilution_warning = True
             
         return alerts
+
+def validate_fluid_choice(patient: PatientInput, fluid_type_str: str, alerts: list) -> list:
+    """
+    Static Check: Is this fluid chemically safe for this patient?
+    Used by /simulate endpoint. Appends strings to the 'alerts' list.
+    """
+    fluid_upper = fluid_type_str.upper()
+    
+    # 1. Hyperglycemia Check (Avoid Dextrose)
+    if patient.current_glucose > 250:
+        if "D5" in fluid_upper or "D10" in fluid_upper or "DEXTROSE" in fluid_upper:
+            alerts.append("risk_hyperglycemia")
+            alerts.append("risk_ketoacidosis") # Maps to DKA flag
+
+    # 2. Hyponatremia Check (Avoid Hypotonics)
+    if patient.current_sodium < 135:
+        if "HALF" in fluid_upper or "0.45" in fluid_upper:
+            alerts.append("risk_cerebral_edema")
+
+    # 3. Hypernatremia Check (Avoid Saline overload)
+    if patient.current_sodium > 155:
+        # Check against the string value of the Enum
+        if fluid_type_str == FluidType.NS.value:
+            alerts.append("risk_hypernatremia")
+
+    return alerts
+
+def validate_simulation_result(initial_patient: PatientInput, 
+                               final_state: SimulationState, 
+                               fluid_type: str, 
+                               alerts: list):
+    """
+    Dynamic Check: Did the simulation result in dangerous physiological shifts?
+    Used by /simulate endpoint.
+    """
+    
+    # 1. Rapid Sodium Shift (Central Pontine Myelinolysis Risk)
+    delta_sodium = final_state.current_sodium - initial_patient.current_sodium
+    duration_hrs = final_state.time_minutes / 60.0 if final_state.time_minutes > 0 else 1
+    rate_of_change = delta_sodium / duration_hrs
+
+    if rate_of_change > 1.0: # Rising > 1 mEq/L/hr
+        alerts.append("risk_rapid_sodium_shift")
+        alerts.append("risk_cerebral_edema") # Maps to Brain Icon
+    
+    # 2. Worsening Hyponatremia
+    if final_state.current_sodium < 125 and delta_sodium < -1.0:
+        alerts.append("risk_worsening_hyponatremia")
+        alerts.append("risk_cerebral_edema")
+
+    # 3. Induced Hyperglycemia
+    if final_state.current_glucose_mg_dl > 300 and initial_patient.current_glucose < 200:
+        alerts.append("risk_induced_hyperglycemia")
+        alerts.append("risk_ketoacidosis")
+    
+    # 4. Unmanaged Hypoglycemia
+    if final_state.current_glucose_mg_dl < 50:
+        alerts.append("risk_hypoglycemia")
+
+    # 5. Critical Hemodilution
+    if final_state.current_hemoglobin < 7.0 and initial_patient.hemoglobin_g_dl > 8.0:
+        alerts.append("risk_critical_hemodilution")
+        alerts.append("anemia_dilution_warning")
+
+    # 6. Renal / Potassium Rules
+    is_oliguric = initial_patient.time_since_last_urine_hours > 6.0
+    # Check if fluid is RL (contains Potassium)
+    has_potassium = fluid_type == FluidType.RL.value 
+    
+    if is_oliguric and has_potassium:
+        alerts.append("risk_hyperkalemia_renal")
+        alerts.append("hydrocortisone_needed") # Maps to Yellow Warning
+
+    # 7. Hyperchloremic Acidosis Risk (Large Volume NS)
+    total_infused = final_state.total_volume_infused_ml
+    relative_vol = total_infused / initial_patient.weight_kg
+    
+    if fluid_type == FluidType.NS.value and relative_vol > 40:
+        alerts.append("risk_hyperchloremic_acidosis")
+
+    return alerts
