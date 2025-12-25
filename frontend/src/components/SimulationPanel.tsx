@@ -144,7 +144,7 @@ export const SimulationPanel: React.FC<Props> = ({ patient }) => {
                  </div>
               </div>
 
-              <div className="bg-white rounded-xl p-1 overflow-hidden">
+              <div className="bg-white rounded-xl p-1 overflow-hidden h-64">
                  <TrajectoryChart data={result.graph_data} />
               </div>
 
