@@ -984,6 +984,25 @@ class PediaFlowPhysicsEngine:
         
         aborted = False
         trajectory = [] 
+
+        # 1. CAPTURE T=0 (Initial State)
+        # This forces the graph to start at your INPUT BP, not the calculated T=1.
+        if return_series:
+            # Visual Fix: Clamp lung water to 0 (Negative pressure = Dry Lungs)
+            display_lung_water = max(0.0, initial_state.p_interstitial_mmHg)
+            
+            trajectory.append({
+                "time": 0, # <--- Start at Time 0
+                "map": int(initial_state.map_mmHg),
+                "lung_water": round(display_lung_water, 1),
+                "leak_rate": 0.0,
+                "urine_output": 0.0,
+                "sodium": round(initial_state.current_sodium, 1),
+                "potassium": round(initial_state.current_potassium, 2),
+                "glucose": int(initial_state.current_glucose_mg_dl),
+                "hb": round(initial_state.current_hemoglobin, 1),
+                "hct": round(initial_state.current_hematocrit_dynamic, 1)
+            })
         
         # SIMULATION LOOP
         for t in range(int(duration_min)):
