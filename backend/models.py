@@ -367,6 +367,8 @@ class SimulationState:
     cumulative_bolus_count: int
     time_since_last_bolus_min: float
 
+    current_sodium: float = 140.0 # Default start value
+
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
 @dataclass
