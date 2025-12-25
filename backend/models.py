@@ -369,6 +369,7 @@ class SimulationState:
 
     current_sodium: float = 140.0 # Default start value
     current_hemoglobin: float = 10.0 # Default fallback
+    current_potassium: float = 4.0 
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
