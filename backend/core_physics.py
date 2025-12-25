@@ -848,6 +848,27 @@ class PediaFlowPhysicsEngine:
             
         new_glucose = max(10.0, min(new_glucose, 800.0))
 
+        # 1. Calculate Total Water (Liters)
+        total_water_l = new_v_blood + new_v_inter + new_v_icf
+        
+        # 2. Calculate Current Sodium Mass (mEq)
+        # We assume the previous concentration applies to the whole pool approx.
+        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l + state.v_intracellular_current_l)
+        
+        # 3. Add Infused Sodium
+        fluid_na_conc = FLUID_LIBRARY.get(fluid_type).sodium_meq_l
+        added_na_meq = (rate_min / 1000.0) * fluid_na_conc * dt_minutes
+        
+        # 4. Calculate New Concentration (Mass / Volume)
+        # 
+        if total_water_l > 0:
+            new_sodium = (current_total_na + added_na_meq) / total_water_l
+        else:
+            new_sodium = state.current_sodium
+            
+        # Safety clamp to prevent math explosions
+        new_sodium = max(100.0, min(new_sodium, 180.0))
+
         return SimulationState(
             time_minutes=state.time_minutes + dt_minutes,
             v_blood_current_l=new_v_blood,
@@ -873,6 +894,7 @@ class PediaFlowPhysicsEngine:
             current_hematocrit_dynamic=new_hct,
             current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
             current_glucose_mg_dl=new_glucose,
+            current_sodium=new_sodium,
             
             # Pass-throughs
             q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
