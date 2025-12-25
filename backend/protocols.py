@@ -61,7 +61,7 @@ class PrescriptionEngine:
                  duration = 30
 
         # 1. Specific Dosing for Blood Products
-        if fluid == FluidType.PRBC:
+        elif fluid == FluidType.PRBC:
             # SAFETY: Never give 20ml/kg Blood as a rapid bolus.
             # Standard: 10ml/kg. 
             # Duration: Emergency = 60 mins, Standard = 240 mins.
