@@ -368,6 +368,7 @@ class SimulationState:
     time_since_last_bolus_min: float
 
     current_sodium: float = 140.0 # Default start value
+    current_hemoglobin: float = 10.0 # Default fallback
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
