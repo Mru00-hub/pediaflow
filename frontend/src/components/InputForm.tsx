@@ -216,7 +216,7 @@ export const InputForm: React.FC<Props> = ({ onSubmit, loading }) => {
             {/* Ongoing Losses */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Ongoing Losses (Diarrhea/Vomit)</label>
-              <select {...register("ongoing_losses_severity")} className="w-full p-2 border rounded bg-white">
+              <select {...register("ongoing_losses_severity", { valueAsNumber: true })} className="w-full p-2 border rounded bg-white">
                 <option value={OngoingLosses.NONE}>None</option>
                 <option value={OngoingLosses.MILD}>Mild (5 ml/kg/hr)</option>
                 <option value={OngoingLosses.MODERATE}>Moderate (7 ml/kg/hr)</option>
@@ -239,7 +239,7 @@ export const InputForm: React.FC<Props> = ({ onSubmit, loading }) => {
             {/* IV Set */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">IV Set Available</label>
-              <select {...register("iv_set_available")} className="w-full p-2 border rounded bg-white">
+              <select {...register("iv_set_available", { valueAsNumber: true })} className="w-full p-2 border rounded bg-white">
                 <option value={IVSetType.MICRO_DRIP}>Micro Drip (60 drops/ml)</option>
                 <option value={IVSetType.MACRO_DRIP}>Macro Drip (20 drops/ml)</option>
               </select>
