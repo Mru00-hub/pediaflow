@@ -769,7 +769,7 @@ class PediaFlowPhysicsEngine:
 
         normalized_svr_dynamic = svr_dynamic / 1000.0
         denom_dynamic = 1.0 + (normalized_svr_dynamic - 1.0) * params.afterload_sensitivity
-        raw_factor_updated = 1.0 / max(0.1, denom)
+        raw_factor_updated = 1.0 / max(0.1, denom_dynamic)
         afterload_factor_updated = max(0.3, raw_factor_updated)
                                    
         # Recalculate CO and MAP
@@ -1061,7 +1061,6 @@ class PediaFlowPhysicsEngine:
             q_osmotic_shift_ml_min=fluxes['q_osmotic'],
             
             # Safety Trackers
-            time_minutes=state.time_minutes + dt_minutes,
             total_volume_infused_ml=state.total_volume_infused_ml + (rate_min * dt_minutes),
             total_sodium_load_meq=new_sodium_load,
             current_hematocrit_dynamic=new_hct,
