@@ -560,97 +560,101 @@ class PediaFlowPhysicsEngine:
     @staticmethod
     def initialize_simulation_state(input: PatientInput, params: PhysiologicalParams) -> SimulationState:
         """
-        Creates the 'T=0' State based on current Clinical Presentation.
-        NOW FORCES ALIGNMENT WITH SOLVER TO PREVENT SPIKES.
+        T=0: INPUT BP IS TRUTH. 
+        Calculates CVP and Blood Volume backwards from the Input BP,
+        BUT respects clinical signs of congestion (Hepatomegaly).
         """
         
-        # 1. Get Base Volumes
+        # 1. Base Volumes
         vols = PediaFlowPhysicsEngine._calculate_compartment_volumes(input)
-        v_icf_normal = vols["v_intracellular"]
-        
-        # 2. ALIGNMENT FIX: Use the Solver's CVP as the Source of Truth
-        # The solver balanced SVR based on 'params.target_cvp_mmhg'. 
-        # We MUST start there, or the physics will explode.
-        start_cvp = params.target_cvp_mmhg
-
-        # 4. Interstitial Volume Initialization
-        # If we have wet lungs (high CVP/PCWP), we likely have interstitial edema too.
         current_v_inter = params.v_inter_normal_l
-        start_p_inter = -2.0 
-            
-        # 3. Back-Calculate Blood Volume from CVP
-        # Physics: CVP = 3.0 + (ExcessVol / Compliance)
-        # Therefore: ExcessVol = (StartCVP - 3.0) * Compliance
-        # This ensures that when the simulator calculates CVP at T=1, it gets exactly 'start_cvp'.
         
-        current_v_blood = params.final_starting_blood_volume_l
-        
-        # Safety Floor for Blood Volume (Prevent negative volumes in severe shock math)
-        min_v_blood = params.v_blood_normal_l * 0.4 
-        current_v_blood = max(current_v_blood, min_v_blood)
-
-        # ADD SAM/Sepsis baseline AFTER initialization:
+        # SAM/Septic Baseline Edema (Third spacing logic)
         if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
-            baseline_edema_ml = input.weight_kg * 10
+            baseline_edema_ml = input.weight_kg * 15  # 15ml/kg edema
             current_v_inter += baseline_edema_ml / 1000.0
-            start_p_inter = max(start_p_inter, 1.0)
-        
-        # If CVP is high (>8), assume some leak has occurred
-        if start_cvp > 8.0:
-             # Assume equilibrium: P_inter rises with CVP
-             start_p_inter = (start_cvp - 8.0) * 0.5 
-             start_p_inter = min(start_p_inter, 6.0) # Cap at 6 (Edema)
-             
-             if start_p_inter > 0:
-                 excess_inter_l = (start_p_inter * params.interstitial_compliance_ml_mmhg) / 1000.0
-                 current_v_inter += excess_inter_l
 
-        # 5. Metabolic Initialization
-        start_glucose = input.current_glucose if input.current_glucose else 90.0
-        start_sodium = input.current_sodium if input.current_sodium else 140.0
-        start_hb = input.hemoglobin_g_dl
-        start_potassium = 4.0 
-        start_lactate = input.lactate_mmol_l if input.lactate_mmol_l else 2.0
-        
-        # 6. Loss Rates
-        loss_rate_ml_kg = input.ongoing_losses_severity.value
-        ongoing_loss_rate = (input.weight_kg * loss_rate_ml_kg) / 60.0
-
+        # 2. DETERMINE STARTING MAP (The Ground Truth)
         if input.diastolic_bp is not None:
-            actual_start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
+             start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
         else:
-            actual_start_map = input.systolic_bp * 0.65
+             start_map = input.systolic_bp * 0.65
 
-        vol_excess_start = (current_v_blood - params.v_blood_normal_l) * 1000
-        start_cvp_calc = 3.0 + (vol_excess_start / params.venous_compliance_ml_mmhg)
-        temp_state = replace(state, cvp_mmHg=start_cvp_calc, v_blood_current_l=current_v_blood)
-        physics_map = PediaFlowPhysicsEngine._calculate_derivatives(temp_state, params, 
-            FLUID_LIBRARY[FluidType.RINGER_LACTATE], 0.0)['derived_map']
+        # 3. BACK-CALCULATE CVP (The "Backward" Physics)
+        # Physics: MAP = CVP + (CO * SVR / 80)
+        co_est = params.max_cardiac_output_l_min * params.cardiac_contractility * 0.75 
         
-        print(f"DEBUG: Input BP = {input.systolic_bp}")
-        print(f"DEBUG: Target MAP (Healthy) = {params.target_map_mmhg}")
-        print(f"DEBUG: Actual MAP (Sick)    = {actual_start_map}")
+        # Hyperdynamic Sepsis Check
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+             co_est *= 1.2 
+
+        pressure_drop = (co_est * params.svr_resistance) / 80.0
+        estimated_cvp = start_map - pressure_drop
+        
+        # Clamp CVP to physiological realities
+        start_cvp = max(1.0, min(estimated_cvp, 18.0))
+
+        # --- CRITICAL RESTORATION: CONGESTION OVERRIDE ---
+        # If the math says "Low CVP" (due to low BP), but exam says "Hepatomegaly",
+        # we must force CVP up. This implies the Heart/SVR are worse than estimated.
+        if input.baseline_hepatomegaly:
+            start_cvp = max(start_cvp, 10.0) # Force congestion threshold
+
+        # 4. BACK-CALCULATE BLOOD VOLUME FROM CVP
+        # CVP = 3 + (Excess / Compliance)
+        vol_excess_ml = (start_cvp - 3.0) * params.venous_compliance_ml_mmhg
+        current_v_blood = params.v_blood_normal_l + (vol_excess_ml / 1000.0)
+        
+        # Safety floor: Even if math says empty, don't crash the array
+        current_v_blood = max(current_v_blood, params.v_blood_normal_l * 0.35)
+
+        # 5. INTERSTITIAL PRESSURE & LUNG WATER
+        # If CVP is high (>8), fluid leaks into tissue (Restored Logic)
+        if start_cvp > 8.0:
+             # Equilibrium: P_inter rises with CVP
+             equilibrium_p_inter = (start_cvp - 8.0) * 0.5 
+             
+             # Calculate volume needed to reach this pressure
+             # P = Vol / Compliance -> Vol = P * Compliance
+             if equilibrium_p_inter > 0:
+                 required_excess_vol = (equilibrium_p_inter * params.interstitial_compliance_ml_mmhg) / 1000.0
+                 current_v_inter += required_excess_vol
+
+        # Recalculate P_inter based on final volume
+        inter_excess_ml = (current_v_inter - params.v_inter_normal_l) * 1000
+        start_p_inter = max(-2.0, inter_excess_ml / params.interstitial_compliance_ml_mmhg)
+
+        # 6. DISEASE-SPECIFIC METABOLIC BASELINES
+        start_glucose = input.current_glucose if input.current_glucose else 90.0
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK and not input.current_glucose: 
+            start_glucose = 65.0 # Septic hypoglycemia risk
+            
+        start_sodium = input.current_sodium if input.current_sodium else 140.0
+        if params.is_sam and not input.current_sodium: 
+            start_sodium = 132.0 # SAM Hyponatremia
+            
+        start_lactate = input.lactate_mmol_l if input.lactate_mmol_l else 2.0
+        if not input.lactate_mmol_l:
+            if input.capillary_refill_sec > 4: start_lactate = 6.0
+            elif input.capillary_refill_sec > 2: start_lactate = 3.5
+
         return SimulationState(
             time_minutes=0.0,
             
-            # EXACT VOLUMES (Aligned to CVP)
+            # Exact Volumes aligned to Input BP + Congestion Flags
             v_blood_current_l=current_v_blood,
             v_interstitial_current_l=max(current_v_inter, 0.1),
-            v_intracellular_current_l=v_icf_normal, 
+            v_intracellular_current_l=vols["v_intracellular"], 
         
-            # EXACT PRESSURES (Aligned to Solver)
-            cvp_mmHg=max(1.0, start_cvp_calc),      
+            # Exact Pressures
+            cvp_mmHg=start_cvp,      
             p_interstitial_mmHg=start_p_inter,      
-            map_mmHg=physics_map,                          
-            pcwp_mmHg=max(1.0, start_cvp_calc * 1.2)
-            p_interstitial_mmHg=start_p_inter,
-            
+            map_mmHg=start_map,                          
+            pcwp_mmHg=start_cvp * 1.25, 
+
             # Zeroed Fluxes
-            q_infusion_ml_min=0.0,
-            q_leak_ml_min=0.0,
-            q_urine_ml_min=0.0,
-            q_lymph_ml_min=0.0,
-            q_osmotic_shift_ml_min=0.0,
+            q_infusion_ml_min=0.0, q_leak_ml_min=0.0, q_urine_ml_min=0.0,
+            q_lymph_ml_min=0.0, q_osmotic_shift_ml_min=0.0,
             
             # Integrators
             total_volume_infused_ml=0.0,
@@ -659,14 +663,16 @@ class PediaFlowPhysicsEngine:
             current_hematocrit_dynamic=input.hematocrit_pct,
             current_weight_dynamic_kg=input.weight_kg,
             
-            q_ongoing_loss_ml_min=ongoing_loss_rate,
+            q_ongoing_loss_ml_min=(input.weight_kg * input.ongoing_losses_severity.value) / 60.0,
             q_insensible_loss_ml_min=params.insensible_loss_ml_min,
 
+            # Metabolics
             current_glucose_mg_dl=start_glucose,
             current_sodium=start_sodium,
-            current_hemoglobin=start_hb,
-            current_potassium=start_potassium,
+            current_hemoglobin=input.hemoglobin_g_dl if input.hemoglobin_g_dl else 11.0,
+            current_potassium=3.8 if params.is_sam else 4.2, 
             current_lactate_mmol_l=start_lactate,
+            
             cumulative_bolus_count=0,
             time_since_last_bolus_min=999.0
         )
@@ -950,36 +956,65 @@ class PediaFlowPhysicsEngine:
         new_map = state.map_mmHg * 0.7 + new_map * 0.3
 
         # 6. METABOLIC UPDATES (ALL electrolytes, Hb, glucose)
-        total_infused_ml = rate_min * dt_minutes
+        total_infused_vol_l = (rate_min * dt_minutes) / 1000.0
         blood_volume_l = new_v_blood
+        ecf_vol_l = new_v_blood + new_v_inter
     
         # Glucose (infusion - consumption)
+        # Consumption varies by stress state
+        base_burn_rate = params.glucose_utilization_mg_kg_min
+        if params.is_sam: 
+            base_burn_rate *= 0.7  # Low muscle mass / metabolic adaptation
+        if params.reflection_coefficient_sigma < 0.6: # Septic/Dengue
+            base_burn_rate *= 2.0  # Hypermetabolic stress
         glucose_in_mg_min = (rate_min / 1000) * fluid_props.glucose_g_l * 1000  # mg/min
         glucose_consumption_mg_min = (params.weight_kg * params.glucose_utilization_mg_kg_min)
         new_glucose = state.current_glucose_mg_dl + (
             (glucose_in_mg_min - glucose_consumption_mg_min) * dt_minutes * 10 / blood_volume_l
         )
     
-        # Sodium (infusion - excretion)
+        # --- SODIUM LOGIC ---
+        # Urine Na concentration varies by pathology
+        if params.is_sam:
+            urine_na_conc = 20.0 # Retention (Edematous state)
+        elif params.reflection_coefficient_sigma < 0.5:
+            urine_na_conc = 80.0 # Tubulopathy / Wasting
+        else:
+            urine_na_conc = 50.0 # Normal
+
         na_in_meq_min = (rate_min / 1000) * fluid_props.sodium_meq_l
-        na_excretion_meq_min = fluxes['q_urine'] / 1000 * 50  # Assume 50 mEq/L urine
-        ecf_vol_l = new_v_blood + new_v_inter
+        na_excretion_meq_min = (fluxes['q_urine'] / 1000) * urine_na_conc
+        
         new_sodium = state.current_sodium + (
             (na_in_meq_min - na_excretion_meq_min) * dt_minutes * 10 / ecf_vol_l
         )
-    
-        # Hemoglobin Dilution (Hct = Hb * RBCvol / total_blood_vol)
-        rbc_volume_l = (state.current_hemoglobin * blood_volume_l) / 15.0  # Assume Hct=45% normal
-        new_hemoglobin = (rbc_volume_l * 15.0) / new_v_blood
-        new_hematocrit = new_hemoglobin * 3.0
     
         # Potassium (small changes from infusion)
         k_in_mmol_min = (rate_min / 1000) * fluid_props.potassium_mmol_l
         new_potassium = state.current_potassium + (k_in_mmol_min * dt_minutes * 10 / blood_volume_l)
     
-        # Lactate (decreases with improved perfusion)
-        perfusion_improvement = max(0, (new_map - state.map_mmHg) / params.target_map_mmhg)
-        new_lactate = state.current_lactate_mmol_l * (0.99 - perfusion_improvement * 0.01)
+        # --- LACTATE LOGIC (The "Slow Fall" for Sepsis) ---
+        # Clearance depends on Perfusion Pressure (MAP - CVP) and Liver Function
+        perfusion_p = new_map - new_cvp
+        
+        # Calculate Clearance Rate Constant (k)
+        if params.reflection_coefficient_sigma < 0.5: 
+            # SEPTIC SHOCK: Liver dysfunction/Hypoperfusion -> Very slow clearance
+            clearance_k = 0.015 * (perfusion_p / 65.0) 
+        elif params.is_sam:
+            # SAM: Reduced metabolic reserve
+            clearance_k = 0.03 * (perfusion_p / 65.0)
+        else:
+            # DEHYDRATION (Healthy Liver): Fast clearance
+            clearance_k = 0.08 * (perfusion_p / 65.0)
+            
+        clearance_k = max(0.0, min(clearance_k, 0.15)) # Clamp
+        
+        # Lactate Washout
+        new_lactate = state.current_lactate_mmol_l * (1.0 - (clearance_k * dt_minutes))
+        # Add production if perfusion is terrible
+        if perfusion_p < 35.0:
+            new_lactate += 0.2 * dt_minutes
     
         # Weight (total water change)
         total_dv_ml = dv_blood_ml + dv_inter_ml + dv_icf_ml
