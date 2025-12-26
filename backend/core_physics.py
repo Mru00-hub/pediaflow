@@ -572,13 +572,11 @@ class PediaFlowPhysicsEngine:
         # The solver balanced SVR based on 'params.target_cvp_mmhg'. 
         # We MUST start there, or the physics will explode.
         start_cvp = params.target_cvp_mmhg
+
+        # 4. Interstitial Volume Initialization
+        # If we have wet lungs (high CVP/PCWP), we likely have interstitial edema too.
         current_v_inter = params.v_inter_normal_l
         start_p_inter = -2.0 
-
-        if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
-            baseline_edema_ml = input.weight_kg * 10  # ~10ml/kg chronic third-spacing
-            current_v_inter += baseline_edema_ml / 1000.0
-            start_p_inter = max(start_p_inter, 1.0)  # Subtle +1mmHg baseline
             
         # 3. Back-Calculate Blood Volume from CVP
         # Physics: CVP = 3.0 + (ExcessVol / Compliance)
@@ -591,11 +589,6 @@ class PediaFlowPhysicsEngine:
         min_v_blood = params.v_blood_normal_l * 0.4 
         current_v_blood = max(current_v_blood, min_v_blood)
 
-        # 4. Interstitial Volume Initialization
-        # If we have wet lungs (high CVP/PCWP), we likely have interstitial edema too.
-        current_v_inter = params.v_inter_normal_l
-        start_p_inter = -2.0
-        
         # ADD SAM/Sepsis baseline AFTER initialization:
         if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
             baseline_edema_ml = input.weight_kg * 10
