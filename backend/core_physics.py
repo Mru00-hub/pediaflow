@@ -1050,7 +1050,6 @@ class PediaFlowPhysicsEngine:
             v_intracellular_current_l=new_v_icf,
             
             # Updated Pressures
-            map_mmHg=fluxes['derived_map'], 
             cvp_mmHg=new_cvp,
             pcwp_mmHg=new_cvp * 1.2, 
             p_interstitial_mmHg=new_p_inter,
