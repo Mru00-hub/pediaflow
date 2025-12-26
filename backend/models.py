@@ -312,7 +312,9 @@ class PhysiologicalParams:
     interstitial_compliance_ml_mmhg: float # Replaces magic number 100.0
 
     target_cvp_mmhg: float
-    final_starting_blood_volume_l: float
+    final_starting_blood_volume_l: float = 0.0
+    is_sam: bool = False
+    capillary_recruitment_base: float = 1.0
 
     # CONFIDENCE INTERVALS
     # Used to widen safety margins in output
@@ -372,6 +374,9 @@ class SimulationState:
     current_hemoglobin: float = 10.0 # Default fallback
     current_potassium: float = 4.0 
     current_lactate_mmol_l: float = 2.0
+    final_starting_blood_volume_l: float = 0.0
+    is_sam: bool = False
+    capillary_recruitment_base: float = 1.0
 
 # --- 5. OUTPUT LAYER (The Actionable Results) ---
 
