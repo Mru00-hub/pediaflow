@@ -596,6 +596,7 @@ class PediaFlowPhysicsEngine:
         start_sodium = input.current_sodium if input.current_sodium else 140.0
         start_hb = input.hemoglobin_g_dl
         start_potassium = 4.0 
+        start_lactate = input.lactate_mmol_l if input.lactate_mmol_l else 2.0
         
         # 6. Loss Rates
         loss_rate_ml_kg = input.ongoing_losses_severity.value
@@ -636,6 +637,7 @@ class PediaFlowPhysicsEngine:
             current_sodium=start_sodium,
             current_hemoglobin=start_hb,
             current_potassium=start_potassium,
+            current_lactate_mmol_l=start_lactate,
             cumulative_bolus_count=0,
             time_since_last_bolus_min=999.0
         )
@@ -745,10 +747,10 @@ class PediaFlowPhysicsEngine:
                     if params.reflection_coefficient_sigma < 0.6:  # septic / dengue physiology
                         lactate_severity = 1.0
                         if params.albumin_uncertainty_g_dl >= 0 and hasattr(params, "lactate_mmol_l"):
-                            lactate_severity = min(params.lactate_mmol_l / 4.0, 2.0)
-                        shunt_fraction = 0.3 * lactate_severity
-                        co_l_min = co_l_min * (1 - shunt_fraction)
-                        derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
+                            lactate_severity = min(state.current_lactate_mmol_l / 4.0, 2.0)
+                            shunt_fraction = 0.3 * lactate_severity
+                            co_l_min = co_l_min * (1 - shunt_fraction)
+                            derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
         derived_map = max(30.0, min(derived_map, 160.0))
 
         # --- 3. STARLING FORCES (Capillary Leak) ---
@@ -953,10 +955,12 @@ class PediaFlowPhysicsEngine:
             new_potassium = state.current_potassium
         new_potassium = max(1.5, min(new_potassium, 12.0))
 
+        perfusion_p = fluxes['derived_map'] - new_cvp
+
         lactate_prod = 0.0
         if perfusion_p < 50:
             lactate_prod = (50 - perfusion_p) * 0.05
-        lactate_clear = state.current_lactate_mmol_l * (0.1 if fluxes['derived_map'] > 60 else 0.03)
+        lactate_clear = state.current_lactate_mmol_l * (0.12 if perfusion_p > 60 else 0.04)
         new_lactate = state.current_lactate_mmol_l + (lactate_prod - lactate_clear) * dt_minutes
         new_lactate = max(0.5, min(new_lactate, 20.0))
 
