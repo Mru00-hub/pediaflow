@@ -956,74 +956,132 @@ class PediaFlowPhysicsEngine:
         new_map = state.map_mmHg * 0.7 + new_map * 0.3
 
         # 6. METABOLIC UPDATES (ALL electrolytes, Hb, glucose)
-        total_infused_vol_l = (rate_min * dt_minutes) / 1000.0
-        blood_volume_l = new_v_blood
-        ecf_vol_l = new_v_blood + new_v_inter
-    
-        # Glucose (infusion - consumption)
-        # Consumption varies by stress state
-        base_burn_rate = params.glucose_utilization_mg_kg_min
-        if params.is_sam: 
-            base_burn_rate *= 0.7  # Low muscle mass / metabolic adaptation
-        if params.reflection_coefficient_sigma < 0.6: # Septic/Dengue
-            base_burn_rate *= 2.0  # Hypermetabolic stress
-        glucose_in_mg_min = (rate_min / 1000) * fluid_props.glucose_g_l * 1000  # mg/min
-        glucose_consumption_mg_min = (params.weight_kg * params.glucose_utilization_mg_kg_min)
-        new_glucose = state.current_glucose_mg_dl + (
-            (glucose_in_mg_min - glucose_consumption_mg_min) * dt_minutes * 10 / blood_volume_l
-        )
-    
-        # --- SODIUM LOGIC ---
-        # Urine Na concentration varies by pathology
-        if params.is_sam:
-            urine_na_conc = 20.0 # Retention (Edematous state)
-        elif params.reflection_coefficient_sigma < 0.5:
-            urine_na_conc = 80.0 # Tubulopathy / Wasting
-        else:
-            urine_na_conc = 50.0 # Normal
+        # Helper: Liters infused this step
+        step_infusion_l = (rate_min * dt_minutes) / 1000.0
+        
+        # --- A. HEMOGLOBIN & HEMATOCRIT ---
+        # Logic: Hb changes if we ADD red cells (PRBC) or if Volume changes (Dilution/Concentration).
+        # We calculate Total Hb Mass in circulation.
+        
+        # 1. Current Mass (g) = Conc (g/dL) * Vol (L) * 10
+        current_hb_mass_g = state.current_hemoglobin * state.v_blood_current_l * 10.0
+        
+        # 2. Influx Mass
+        # Since FluidProperties doesn't have 'hemoglobin_content', we check the Enum type.
+        hb_conc_in_fluid = 0.0
+        if fluid_type == FluidType.PRBC:
+            hb_conc_in_fluid = 22.0 # PRBC is concentrated (~22 g/dL)
+        
+        hb_influx_g = hb_conc_in_fluid * step_infusion_l * 10.0
+        
+        # 3. New Concentration = (Old Mass + Influx) / New Volume
+        # NOTE: If Dengue leaks plasma (lowering new_v_blood) but Hb Mass stays same,
+        # the denominator shrinks, causing Hb to RISE. (Auto-Hemoconcentration).
+        new_total_hb_mass = current_hb_mass_g + hb_influx_g
+        new_hemoglobin = new_total_hb_mass / (new_v_blood * 10.0)
+        
+        # Clamp to physiological survival limits
+        new_hemoglobin = max(2.0, min(new_hemoglobin, 26.0))
+        new_hematocrit = new_hemoglobin * 3.0
 
-        na_in_meq_min = (rate_min / 1000) * fluid_props.sodium_meq_l
-        na_excretion_meq_min = (fluxes['q_urine'] / 1000) * urine_na_conc
+        # --- B. SODIUM (Distribution: ECF) ---
+        # Sodium distributes across Blood + Interstitial fluid.
+        ecf_vol_l = new_v_blood + new_v_inter
         
-        new_sodium = state.current_sodium + (
-            (na_in_meq_min - na_excretion_meq_min) * dt_minutes * 10 / ecf_vol_l
-        )
-    
-        # Potassium (small changes from infusion)
-        k_in_mmol_min = (rate_min / 1000) * fluid_props.potassium_mmol_l
-        new_potassium = state.current_potassium + (k_in_mmol_min * dt_minutes * 10 / blood_volume_l)
-    
-        # --- LACTATE LOGIC (The "Slow Fall" for Sepsis) ---
-        # Clearance depends on Perfusion Pressure (MAP - CVP) and Liver Function
-        perfusion_p = new_map - new_cvp
+        # 1. Current Mass (mEq)
+        current_na_mass = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l)
         
-        # Calculate Clearance Rate Constant (k)
-        if params.reflection_coefficient_sigma < 0.5: 
-            # SEPTIC SHOCK: Liver dysfunction/Hypoperfusion -> Very slow clearance
-            clearance_k = 0.015 * (perfusion_p / 65.0) 
-        elif params.is_sam:
-            # SAM: Reduced metabolic reserve
-            clearance_k = 0.03 * (perfusion_p / 65.0)
-        else:
-            # DEHYDRATION (Healthy Liver): Fast clearance
-            clearance_k = 0.08 * (perfusion_p / 65.0)
+        # 2. Influx (From Fluid)
+        na_influx = fluid_props.sodium_meq_l * step_infusion_l
+        
+        # 3. Efflux (Urine)
+        # SAM retains Na (low urine conc), Sepsis/Dengue wastes Na (high urine conc).
+        urine_na_conc = 50.0 
+        if params.is_sam: 
+            urine_na_conc = 20.0 
+        elif params.reflection_coefficient_sigma < 0.6: 
+            urine_na_conc = 80.0
             
-        clearance_k = max(0.0, min(clearance_k, 0.15)) # Clamp
+        na_efflux = (fluxes['q_urine'] / 1000.0 * dt_minutes) * urine_na_conc
         
-        # Lactate Washout
+        # 4. New Concentration
+        new_sodium = (current_na_mass + na_influx - na_efflux) / ecf_vol_l
+        new_sodium = max(110.0, min(new_sodium, 180.0))
+
+        # --- C. POTASSIUM (Dengue Hypokalemia Logic) ---
+        # 
+        # Domain: We model Serum K changes in Blood Volume.
+        
+        current_k_mass = state.current_potassium * state.v_blood_current_l
+        
+        # Influx (High for ReSoMal, Moderate for RL)
+        k_influx = fluid_props.potassium_meq_l * step_infusion_l
+        
+        # Efflux (Urine)
+        k_efflux = (fluxes['q_urine'] / 1000.0 * dt_minutes) * 40.0 # Urine K is usually high
+        
+        # DENGUE/SEPSIS SHIFT
+        # In high-stress leaky states, K shifts intracellularly or is wasted.
+        k_shift_loss = 0.0
+        if params.reflection_coefficient_sigma < 0.6: 
+            # DENGUE: Assume 0.03 mmol/min disappearance from serum
+            k_shift_loss = 0.03 * dt_minutes
+            
+        new_k = (current_k_mass + k_influx - k_efflux - k_shift_loss) / new_v_blood
+        new_potassium = max(1.5, min(new_k, 9.0))
+
+        # --- D. GLUCOSE ---
+        # Domain: Blood Volume (rapid equilibration)
+        
+        # 1. Mass (mg) = mg/dL * dL (Vol*10)
+        current_gluc_mass_mg = state.current_glucose_mg_dl * (state.v_blood_current_l * 10.0)
+        
+        # 2. Influx (fluid g/L -> mg/L -> mg total)
+        gluc_influx_mg = (fluid_props.glucose_g_l * 1000.0) * step_infusion_l
+        
+        # 3. Consumption (mg/kg/min)
+        burn_rate = params.glucose_utilization_mg_kg_min
+        if params.reflection_coefficient_sigma < 0.6: 
+            burn_rate *= 1.5 # Stress Hypermetabolism
+        if params.is_sam:
+            burn_rate *= 0.7 # Low muscle mass
+            
+        gluc_consumption_mg = (params.weight_kg * burn_rate) * dt_minutes
+        
+        new_gluc_conc = (current_gluc_mass_mg + gluc_influx_mg - gluc_consumption_mg) / (new_v_blood * 10.0)
+        new_glucose = max(10.0, min(new_gluc_conc, 800.0))
+
+        # --- E. LACTATE & WEIGHT ---
+        # Lactate clearance improves with Perfusion (MAP - CVP)
+        perfusion_p = new_map - new_cvp
+        clearance_k = 0.08 * (perfusion_p / 65.0) 
+        if params.reflection_coefficient_sigma < 0.6: clearance_k = 0.02 # Liver Dysfunction
+        
         new_lactate = state.current_lactate_mmol_l * (1.0 - (clearance_k * dt_minutes))
-        # Add production if perfusion is terrible
-        if perfusion_p < 35.0:
-            new_lactate += 0.2 * dt_minutes
-    
-        # Weight (total water change)
-        total_dv_ml = dv_blood_ml + dv_inter_ml + dv_icf_ml
-        new_weight = state.current_weight_dynamic_kg + (total_dv_ml / 1000)
-    
-        # Bolus tracking
-        new_bolus_count = state.cumulative_bolus_count + (1 if total_infused_ml > 50 else 0)
-        new_time_since_bolus = 0.0 if total_infused_ml > 50 else state.time_since_last_bolus_min + dt_minutes
-    
+        # Production if shock persists
+        if perfusion_p < 35.0: new_lactate += 0.15 * dt_minutes
+        
+        # Real-time Weight (Sum of all fluid changes)
+        # 1 L = 1 kg approx
+        total_fluid_change_l = (dv_blood_ml + dv_inter_ml + dv_icf_ml) / 1000.0
+        new_weight = state.current_weight_dynamic_kg + total_fluid_change_l
+        
+        # Bolus tracking logic
+        # Calculate volume given in this specific minute
+        step_infused_vol_ml = rate_min * dt_minutes
+        total_vol_accum_ml = state.total_volume_infused_ml + step_infused_vol_ml
+
+        # Logic: If we are actively flowing (> 5 ml/hr), the "Time Since Last Bolus" is 0.
+        # It only starts counting up (1, 2, 3...) once the infusion stops.
+        if step_infused_vol_ml > 0.1: 
+            new_time_since_bolus = 0.0
+        else:
+            new_time_since_bolus = state.time_since_last_bolus_min + dt_minutes
+
+        # Logic: Count discrete boluses? 
+        # (Simplified: Just count total volume for now, unless specific trigger needed)
+        new_bolus_count = state.cumulative_bolus_count
+                                
         return replace(state,
             time_minutes=state.time_minutes + dt_minutes,
             v_blood_current_l=new_v_blood,
@@ -1038,12 +1096,12 @@ class PediaFlowPhysicsEngine:
             q_urine_ml_min=fluxes['q_urine'],
             q_lymph_ml_min=fluxes['q_lymph'],
             q_osmotic_shift_ml_min=fluxes['q_osmotic'],
-            current_glucose_mg_dl=max(20, min(new_glucose, 500)),
-            current_sodium=max(120, min(new_sodium, 160)),
-            current_hemoglobin=max(3, min(new_hemoglobin, 25)),
-            current_hematocrit_dynamic=max(10, min(new_hematocrit, 70)),
-            current_potassium=max(2.5, min(new_potassium, 7.0)),
-            current_lactate_mmol_l=max(0.5, min(new_lactate, 20)),
+            current_glucose_mg_dl=new_glucose,
+            current_sodium=new_sodium,
+            current_hemoglobin=new_hemoglobin,
+            current_hematocrit_dynamic=new_hematocrit,
+            current_potassium=new_potassium,
+            current_lactate_mmol_l=max(0.1, min(new_lactate, 25.0)),
             total_volume_infused_ml=state.total_volume_infused_ml + (rate_min * dt_minutes),
             total_sodium_load_meq=state.total_sodium_load_meq + (na_in_meq_min * dt_minutes),
             current_weight_dynamic_kg=new_weight,
