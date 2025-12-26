@@ -312,6 +312,7 @@ class PhysiologicalParams:
     interstitial_compliance_ml_mmhg: float # Replaces magic number 100.0
 
     target_cvp_mmhg: float
+    final_starting_blood_volume_l: float
 
     # CONFIDENCE INTERVALS
     # Used to widen safety margins in output
