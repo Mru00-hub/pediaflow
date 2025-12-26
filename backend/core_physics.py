@@ -478,7 +478,7 @@ class PediaFlowPhysicsEngine:
         
         # Only treat as "Congestion" if not clearly DKA/Severe Dehydration (Acidotic breathing)
         # But if SpO2 is low (<90), it is ALWAYS Congestion/ARDS.
-        has_wet_lungs = is_hypoxic or (is_tachypneic and input.diagnosis not in dry_lung_diagnoses)
+        has_wet_lungs = is_hypoxic or (is_extreme_tachypneic and input.diagnosis not in dry_lung_diagnoses)
 
         if has_wet_lungs:
              # Force High CVP (Congestion). 
