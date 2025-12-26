@@ -620,6 +620,12 @@ class PediaFlowPhysicsEngine:
             actual_start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
         else:
             actual_start_map = input.systolic_bp * 0.65
+
+        vol_excess_start = (current_v_blood - params.v_blood_normal_l) * 1000
+        start_cvp_calc = 3.0 + (vol_excess_start / params.venous_compliance_ml_mmhg)
+        temp_state = replace(state, cvp_mmHg=start_cvp_calc, v_blood_current_l=current_v_blood)
+        physics_map = PediaFlowPhysicsEngine._calculate_derivatives(temp_state, params, 
+            FLUID_LIBRARY[FluidType.RINGER_LACTATE], 0.0)['derived_map']
         
         print(f"DEBUG: Input BP = {input.systolic_bp}")
         print(f"DEBUG: Target MAP (Healthy) = {params.target_map_mmhg}")
@@ -633,9 +639,10 @@ class PediaFlowPhysicsEngine:
             v_intracellular_current_l=v_icf_normal, 
         
             # EXACT PRESSURES (Aligned to Solver)
-            map_mmHg=actual_start_map, 
-            cvp_mmHg=start_cvp,
-            pcwp_mmHg=start_cvp * 1.2,
+            cvp_mmHg=max(1.0, start_cvp_calc),      
+            p_interstitial_mmHg=start_p_inter,      
+            map_mmHg=physics_map,                          
+            pcwp_mmHg=max(1.0, start_cvp_calc * 1.2)
             p_interstitial_mmHg=start_p_inter,
             
             # Zeroed Fluxes
@@ -880,196 +887,136 @@ class PediaFlowPhysicsEngine:
 
     @staticmethod
     def simulate_single_step(state: SimulationState, 
-                             params: PhysiologicalParams, 
-                             infusion_rate_ml_hr: float, 
-                             fluid_type: FluidType,
-                             dt_minutes: float = 1.0) -> SimulationState:
-        """
-        THE INTEGRATOR.
-        Applies fluxes to volumes over time dt.
-        Combines Hydraulic Physics (Volumes/Pressures) with Metabolic Physics (Labs).
-        """
+                            params: PhysiologicalParams, 
+                            infusion_rate_ml_hr: float, 
+                            fluid_type: FluidType,
+                            dt_minutes: float = 1.0) -> SimulationState:
+        """ROCK-SOLID INTEGRATOR - No overrides, pure physics."""
         fluid_props = FLUID_LIBRARY.get(fluid_type)
         rate_min = infusion_rate_ml_hr / 60.0
-        
-        # --- PHASE 1: HYDRAULICS (FLUXES & VOLUMES) ---
-        
-        # 1. Get Instantaneous Fluxes
-        # 
+    
+        # 1. PHYSICS FIRST (Calculate ALL fluxes from CURRENT state)
         fluxes = PediaFlowPhysicsEngine._calculate_derivatives(state, params, fluid_props, rate_min)
-        q_urine_l_min = fluxes['q_urine'] / 1000.0  # Convert to Liters for chemical math
-        
-        # 2. Update Volumes (Mass Balance)
-        # Blood gains infusion (vascular portion) + lymph, loses leak + urine
+    
+        # 2. VOLUME UPDATES (Conservation of mass - exact ml/min * time)
         vol_dist = fluid_props.vol_distribution_intravascular
-        dv_blood = ((rate_min * vol_dist) - fluxes['q_leak'] - fluxes['q_urine'] + fluxes['q_lymph']) * dt_minutes
-        
-        # Subtract ongoing pathological losses (diarrhea/bleeding)
-        dv_blood -= (state.q_ongoing_loss_ml_min * 0.25) * dt_minutes
+    
+        # Blood: +infusion(25%) +lymph -leak -urine -gut_loss(25%)
+        dv_blood_ml = (
+            (rate_min * vol_dist) * dt_minutes +
+            fluxes['q_lymph'] * dt_minutes -
+            fluxes['q_leak'] * dt_minutes -
+            fluxes['q_urine'] * dt_minutes -
+            (state.q_ongoing_loss_ml_min * 0.25) * dt_minutes
+        )
+    
+        # Interstitial: +leak +infusion(75%) -lymph -gut_loss(75%) -insensible -osmotic_out
+        dv_inter_ml = (
+            fluxes['q_leak'] * dt_minutes +
+            (rate_min * (1-vol_dist)) * dt_minutes -
+            fluxes['q_lymph'] * dt_minutes -
+            (state.q_ongoing_loss_ml_min * 0.75) * dt_minutes -
+            state.q_insensible_loss_ml_min * dt_minutes -
+            fluxes['q_osmotic'] * dt_minutes
+        )
+    
+        # Intracellular: +osmotic_in
+        dv_icf_ml = fluxes['q_osmotic'] * dt_minutes
+    
+        # 3. NEW VOLUMES (Safety floors)
+        new_v_blood = max(state.v_blood_current_l + (dv_blood_ml / 1000), params.v_blood_normal_l * 0.4)
+        new_v_inter = max(state.v_interstitial_current_l + (dv_inter_ml / 1000), 0.1)
+        new_v_icf = max(state.v_intracellular_current_l + (dv_icf_ml / 1000), 0.1)
+    
+        # 4. PRESSURES FROM VOLUMES (Pure compliance physics)
+        blood_excess_ml = (new_v_blood - params.v_blood_normal_l) * 1000
+        new_cvp = max(1.0, min(3.0 + (blood_excess_ml / params.venous_compliance_ml_mmhg), 25.0))
+    
+        inter_excess_ml = (new_v_inter - params.v_inter_normal_l) * 1000
+        new_p_inter = max(-2.0, inter_excess_ml / params.interstitial_compliance_ml_mmhg)
+    
+        # 5. MAP EMERGES NATURALLY (CO * SVR + CVP)
+        # Recalculate derivatives WITH NEW VOLUMES for accurate MAP
+        new_state_temp = replace(state,
+            v_blood_current_l=new_v_blood,
+            v_interstitial_current_l=new_v_inter,
+            cvp_mmHg=new_cvp,
+            p_interstitial_mmHg=new_p_inter
+        )
+        final_fluxes = PediaFlowPhysicsEngine._calculate_derivatives(new_state_temp, params, fluid_props, rate_min)
+        new_map = final_fluxes['derived_map']
+    
+        # Smooth MAP transition (prevents jumps)
+        new_map = state.map_mmHg * 0.7 + new_map * 0.3
 
-        new_v_blood = max(state.v_blood_current_l + (dv_blood / 1000.0), params.v_blood_normal_l * 0.4)
-        
-        # Interstitial gains leak + free water (if any), loses lymph
-        dv_inter = (fluxes['q_leak'] - fluxes['q_lymph'] + (rate_min * (1-vol_dist))) * dt_minutes
-        dv_inter -= (state.q_ongoing_loss_ml_min * 0.75) * dt_minutes # Diarrhea comes mostly from here
-        dv_inter -= state.q_insensible_loss_ml_min * dt_minutes # Sweat/Breathing
-        # Adjust for osmotic shift (water moving to cells)
-        dv_inter -= fluxes['q_osmotic'] * dt_minutes
-
-        new_v_inter = max(state.v_interstitial_current_l + (dv_inter / 1000.0), 0.1)
-
-        # Intracellular gains osmotic shift
-        new_v_icf = state.v_intracellular_current_l + (fluxes['q_osmotic'] * dt_minutes / 1000.0)
-
-        # 3. Update Pressures (Compliance Logic)
-        # CVP (Veins are compliant but stiffen when full)
-        vol_excess = (new_v_blood - params.v_blood_normal_l) * 1000
-        new_cvp = 3.0 + (vol_excess / params.venous_compliance_ml_mmhg)
-        new_cvp = max(1.0, min(new_cvp, 25.0))
-
-        # Interstitial Pressure (Only rises if edema present)
-        inter_excess = (new_v_inter - params.v_inter_normal_l) * 1000
-        new_p_inter = inter_excess / params.interstitial_compliance_ml_mmhg if inter_excess > 0 else -2.0
-        new_map = (fluxes['derived_map'] + ((new_cvp - state.cvp_mmHg) * 0.5))
-
-        # 4. Update General Safety Trackers
-        new_total_vol = state.total_volume_infused_ml + (rate_min * dt_minutes)
-        new_sodium_load = state.total_sodium_load_meq + ((rate_min/1000) * fluid_props.sodium_meq_l * dt_minutes)
-
-        # Hematocrit (Dilution)
-        # Prevent division by zero if new_v_blood is impossibly low
-        safe_v_blood = max(new_v_blood, 0.1)
-        mixing_factor = 1.0 - math.exp(-dt_minutes / 5.0)
-        instant_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / safe_v_blood
-        new_hct = state.current_hematocrit_dynamic + (instant_hct - state.current_hematocrit_dynamic) * mixing_factor
-        new_hct = max(5.0, min(new_hct, 70.0))
-        
-        # --- PHASE 2: METABOLICS (LAB VALUES) ---
-        # 
-        
-        # Helpers for Concentration Calculation
-        total_water_l = new_v_blood + new_v_inter + new_v_icf
+        # 6. METABOLIC UPDATES (ALL electrolytes, Hb, glucose)
+        total_infused_ml = rate_min * dt_minutes
+        blood_volume_l = new_v_blood
+    
+        # Glucose (infusion - consumption)
+        glucose_in_mg_min = (rate_min / 1000) * fluid_props.glucose_g_l * 1000  # mg/min
+        glucose_consumption_mg_min = (params.weight_kg * params.glucose_utilization_mg_kg_min)
+        new_glucose = state.current_glucose_mg_dl + (
+            (glucose_in_mg_min - glucose_consumption_mg_min) * dt_minutes * 10 / blood_volume_l
+        )
+    
+        # Sodium (infusion - excretion)
+        na_in_meq_min = (rate_min / 1000) * fluid_props.sodium_meq_l
+        na_excretion_meq_min = fluxes['q_urine'] / 1000 * 50  # Assume 50 mEq/L urine
         ecf_vol_l = new_v_blood + new_v_inter
-        ecf_vol_dl = ecf_vol_l * 10.0
-
-        # A. SODIUM DYNAMICS (Intake - Excretion)
-        # Intake
-        na_in_meq = (rate_min / 1000.0) * fluid_props.sodium_meq_l * dt_minutes
-        
-        # Excretion (Natriuresis)
-        # Low BP = Kidneys hold Na (20 mEq/L). Normal BP = Kidneys dump Na (80 mEq/L).
-        urine_na_conc = 20.0 if state.map_mmHg < 65 else 80.0
-        na_out_meq = q_urine_l_min * urine_na_conc * dt_minutes
-        
-        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l + state.v_intracellular_current_l)
-        
-        # Calculate new concentration
-        if total_water_l > 0:
-            new_sodium = (current_total_na + na_in_meq - na_out_meq) / total_water_l
-        else:
-            new_sodium = state.current_sodium
-        new_sodium = max(100.0, min(new_sodium, 180.0)) # Clamp
-
-        # B. POTASSIUM DYNAMICS (Intake - Excretion)
-        # Intake (RL has 4 mEq/L)
-        k_in_meq = (rate_min / 1000.0) * fluid_props.potassium_meq_l * dt_minutes
-        
-        # Excretion (Kaliuresis)
-        # Kidneys actively secrete K+ (~40 mEq/L). If Urine=0 (Renal Failure), K+ spikes.
-        urine_k_conc = 40.0 
-        k_out_meq = q_urine_l_min * urine_k_conc * dt_minutes
-        
-        # Acute change is modeled in ECF pool
-        current_total_k_ecf = state.current_potassium * (state.v_blood_current_l + state.v_interstitial_current_l)
-        
-        if ecf_vol_l > 0:
-            new_potassium = (current_total_k_ecf + k_in_meq - k_out_meq) / ecf_vol_l
-        else:
-            new_potassium = state.current_potassium
-        new_potassium = max(1.5, min(new_potassium, 12.0))
-
-        perfusion_p = fluxes['derived_map'] - new_cvp
-
-        lactate_prod = 0.0
-        if perfusion_p < 50:
-            lactate_prod = (50 - perfusion_p) * 0.05
-        lactate_clear = state.current_lactate_mmol_l * (0.12 if perfusion_p > 60 else 0.04)
-        new_lactate = state.current_lactate_mmol_l + (lactate_prod - lactate_clear) * dt_minutes
-        new_lactate = max(0.5, min(new_lactate, 20.0))
-
-        # C. GLUCOSE DYNAMICS (Intake - Utilization - Excretion)
-        # Intake
-        glucose_conc_mg_l = fluid_props.glucose_g_l * 1000.0
-        glucose_in_mg = (rate_min / 1000.0) * glucose_conc_mg_l * dt_minutes
-        stress_glucose_production = 0.0
-        if params.afterload_sensitivity > 1.0:  # shock physiology marker
-            stress_multiplier = 1.5 if state.current_glucose_mg_dl > 140 else 1.0
-            stress_glucose_production = 3.0 * params.weight_kg * stress_multiplier * dt_minutes
-        glucose_in_mg += stress_glucose_production
-        
-        # Utilization (Metabolic Burn)
-        glucose_burn_mg = (params.glucose_utilization_mg_kg_min * params.weight_kg) * dt_minutes
-        
-        # Excretion (Glycosuria threshold > 180 mg/dL)
-        glucose_loss_mg = 0.0
-        if state.current_glucose_mg_dl > 180:
-             excess_drive = state.current_glucose_mg_dl - 180
-             # Approx kinetic loss proportional to urine flow
-             glucose_loss_mg = (excess_drive * q_urine_l_min * 10.0) * dt_minutes 
-
-        current_total_glucose = state.current_glucose_mg_dl * (state.v_blood_current_l + state.v_interstitial_current_l) * 10.0
-        
-        if ecf_vol_dl > 0:
-            new_glucose = (current_total_glucose + glucose_in_mg - glucose_burn_mg - glucose_loss_mg) / ecf_vol_dl
-        else:
-            new_glucose = state.current_glucose_mg_dl
-        new_glucose = max(10.0, min(new_glucose, 1200.0))
-
-        # D. HEMOGLOBIN (Dilution)
-        # Mass stays constant (unless bleeding), Volume increases
-        new_hb = (state.v_blood_current_l * state.current_hemoglobin) / safe_v_blood
-
-        # --- PHASE 3: STATE RETURN ---
-        return SimulationState(
+        new_sodium = state.current_sodium + (
+            (na_in_meq_min - na_excretion_meq_min) * dt_minutes * 10 / ecf_vol_l
+        )
+    
+        # Hemoglobin Dilution (Hct = Hb * RBCvol / total_blood_vol)
+        rbc_volume_l = (state.current_hemoglobin * blood_volume_l) / 15.0  # Assume Hct=45% normal
+        new_hemoglobin = (rbc_volume_l * 15.0) / new_v_blood
+        new_hematocrit = new_hemoglobin * 3.0
+    
+        # Potassium (small changes from infusion)
+        k_in_mmol_min = (rate_min / 1000) * fluid_props.potassium_mmol_l
+        new_potassium = state.current_potassium + (k_in_mmol_min * dt_minutes * 10 / blood_volume_l)
+    
+        # Lactate (decreases with improved perfusion)
+        perfusion_improvement = max(0, (new_map - state.map_mmHg) / params.target_map_mmhg)
+        new_lactate = state.current_lactate_mmol_l * (0.99 - perfusion_improvement * 0.01)
+    
+        # Weight (total water change)
+        total_dv_ml = dv_blood_ml + dv_inter_ml + dv_icf_ml
+        new_weight = state.current_weight_dynamic_kg + (total_dv_ml / 1000)
+    
+        # Bolus tracking
+        new_bolus_count = state.cumulative_bolus_count + (1 if total_infused_ml > 50 else 0)
+        new_time_since_bolus = 0.0 if total_infused_ml > 50 else state.time_since_last_bolus_min + dt_minutes
+    
+        return replace(state,
             time_minutes=state.time_minutes + dt_minutes,
-            
-            # Updated Volumes
             v_blood_current_l=new_v_blood,
             v_interstitial_current_l=new_v_inter,
             v_intracellular_current_l=new_v_icf,
-            
-            # Updated Pressures
-            cvp_mmHg=new_cvp,
-            pcwp_mmHg=new_cvp * 1.2, 
-            p_interstitial_mmHg=new_p_inter,
             map_mmHg=new_map,
-            
-            # Fluxes Used
+            cvp_mmHg=new_cvp,
+            p_interstitial_mmHg=new_p_inter,
+            pcwp_mmHg=new_cvp * 1.2,  # PCWP tracks CVP
             q_infusion_ml_min=rate_min,
             q_leak_ml_min=fluxes['q_leak'],
             q_urine_ml_min=fluxes['q_urine'],
             q_lymph_ml_min=fluxes['q_lymph'],
             q_osmotic_shift_ml_min=fluxes['q_osmotic'],
-            
-            # Safety Trackers
+            current_glucose_mg_dl=max(20, min(new_glucose, 500)),
+            current_sodium=max(120, min(new_sodium, 160)),
+            current_hemoglobin=max(3, min(new_hemoglobin, 25)),
+            current_hematocrit_dynamic=max(10, min(new_hematocrit, 70)),
+            current_potassium=max(2.5, min(new_potassium, 7.0)),
+            current_lactate_mmol_l=max(0.5, min(new_lactate, 20)),
             total_volume_infused_ml=state.total_volume_infused_ml + (rate_min * dt_minutes),
-            total_sodium_load_meq=new_sodium_load,
-            current_hematocrit_dynamic=new_hct,
-            current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
-            
-            # Metabolic Labs (Updated)
-            current_sodium=new_sodium,
-            current_glucose_mg_dl=new_glucose,
-            current_potassium=new_potassium,
-            current_hemoglobin=new_hb,
-
-            # Pass-throughs (No change)
-            q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
-            q_insensible_loss_ml_min=state.q_insensible_loss_ml_min,
-            cumulative_bolus_count=state.cumulative_bolus_count,
-            time_since_last_bolus_min=state.time_since_last_bolus_min + dt_minutes,
-            current_lactate_mmol_l=new_lactate,
-        ) 
+            total_sodium_load_meq=state.total_sodium_load_meq + (na_in_meq_min * dt_minutes),
+            current_weight_dynamic_kg=new_weight,
+        
+            # Bolus tracking
+            cumulative_bolus_count=new_bolus_count,
+            time_since_last_bolus_min=new_time_since_bolus
+        )
 
     @staticmethod
     def run_simulation(initial_state: SimulationState, 
