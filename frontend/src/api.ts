@@ -2,7 +2,7 @@
 import type { PatientInput, PrescriptionResponse, SimulationRequest, SimulationResponse } from './types';
 
 // Default to localhost for development
-const API_BASE_URL = 'https://potential-system-v6wr4jjv5j962pwrw-8000.app.github.dev'; 
+const API_BASE_URL = 'https://8080-cs-267176854526-default.cs-asia-southeast1-palm.cloudshell.dev'; 
 
 class PediaFlowClient {
   
