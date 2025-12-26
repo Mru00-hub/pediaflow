@@ -467,13 +467,18 @@ class PediaFlowPhysicsEngine:
         if input.age_months < 2: rr_limit = 60
         elif input.age_months < 12: rr_limit = 50
         else: rr_limit = 40
+
+        dry_lung_diagnoses = [
+            ClinicalDiagnosis.SEVERE_DEHYDRATION,
+            ClinicalDiagnosis.SAM_DEHYDRATION,  # <--- ADD THIS
+        ]
         
         is_hypoxic = input.sp_o2_percent < 90
-        is_tachypneic = input.respiratory_rate_bpm > rr_limit
+        is_extreme_tachypnea = input.respiratory_rate_bpm > (rr_limit * 1.4)
         
         # Only treat as "Congestion" if not clearly DKA/Severe Dehydration (Acidotic breathing)
         # But if SpO2 is low (<90), it is ALWAYS Congestion/ARDS.
-        has_wet_lungs = is_hypoxic or (is_tachypneic and input.diagnosis != ClinicalDiagnosis.SEVERE_DEHYDRATION)
+        has_wet_lungs = is_hypoxic or (is_tachypneic and input.diagnosis not in dry_lung_diagnoses)
 
         if has_wet_lungs:
              # Force High CVP (Congestion). 
