@@ -106,7 +106,7 @@ class PediaFlowPhysicsEngine:
         
         is_sam = (input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION or input.muac_cm < 11.5)
         if is_sam:
-            contractility *= 0.5  # The "Flabby Heart" penalty
+            contractility *= 0.8  # The "Flabby Heart" penalty
         
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
             contractility *= 0.7  # Septic myocardial depression
@@ -404,7 +404,7 @@ class PediaFlowPhysicsEngine:
         # SAM or Hypothermia = 1.5 (Weak hearts give up easily).
         afterload_sens = 0.2 
         if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
-            afterload_sens = 1.5
+            afterload_sens = 1.1
 
         # Interstitial Compliance (Stiffer in SAM = faster edema)
         # Replaces the magic number logic
@@ -425,8 +425,6 @@ class PediaFlowPhysicsEngine:
              # Reduce the "Optimal Preload" (Heart can't stretch as much)
              opt_preload *= 0.85 
              warnings.missing_optimal_inputs.append("Hepatomegaly Detected: Reduced Volume Tolerance")
-        if is_sam:
-            opt_preload *= 0.7
     
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
@@ -494,12 +492,9 @@ class PediaFlowPhysicsEngine:
         
         for _ in range(15):
             normalized_svr = current_guess_svr / 1000.0
-            if current_guess_svr > 3000:
-                current_sens = afterload_sens * 0.5 # Heart is stiffer/stronger
-            else:
-                current_sens = afterload_sens
             denom = 1.0 + (normalized_svr - 1.0) * afterload_sens
-            afterload_factor = 1.0 / max(0.5, denom) 
+            raw_factor = 1.0 / max(0.1, denom)
+            afterload_factor = max(0.3, raw_factor)
             
             effective_co = base_co * afterload_factor
             safe_co = max(0.01, effective_co)
@@ -607,6 +602,14 @@ class PediaFlowPhysicsEngine:
         loss_rate_ml_kg = input.ongoing_losses_severity.value
         ongoing_loss_rate = (input.weight_kg * loss_rate_ml_kg) / 60.0
 
+        if input.diastolic_bp is not None:
+            actual_start_map = input.diastolic_bp + (input.systolic_bp - input.diastolic_bp) / 3.0
+        else:
+            actual_start_map = input.systolic_bp * 0.65
+        
+        print(f"DEBUG: Input BP = {input.systolic_bp}")
+        print(f"DEBUG: Target MAP (Healthy) = {params.target_map_mmhg}")
+        print(f"DEBUG: Actual MAP (Sick)    = {actual_start_map}")
         return SimulationState(
             time_minutes=0.0,
             
@@ -616,7 +619,7 @@ class PediaFlowPhysicsEngine:
             v_intracellular_current_l=v_icf_normal, 
         
             # EXACT PRESSURES (Aligned to Solver)
-            map_mmHg=params.target_map_mmhg, # Start at the target the solver found
+            map_mmHg=actual_start_map, 
             cvp_mmHg=start_cvp,
             pcwp_mmHg=start_cvp * 1.2,
             p_interstitial_mmHg=start_p_inter,
@@ -691,7 +694,8 @@ class PediaFlowPhysicsEngine:
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
         normalized_svr = params.svr_resistance / 1000.0
         denom = 1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity
-        afterload_factor = 1.0 / max(0.5, denom)
+        raw_factor = 1.0 / max(0.1, denom)
+        afterload_factor = max(0.3, raw_factor)
 
         # Dynamic SVR 
         # SVR adjusts to CVP changes (Baroreflex). 
@@ -742,7 +746,8 @@ class PediaFlowPhysicsEngine:
 
         normalized_svr_dynamic = svr_dynamic / 1000.0
         denom_dynamic = 1.0 + (normalized_svr_dynamic - 1.0) * params.afterload_sensitivity
-        afterload_factor_updated = 1.0 / max(0.5, denom_dynamic)
+        raw_factor_updated = 1.0 / max(0.1, denom)
+        afterload_factor_updated = max(0.3, raw_factor_updated)
                                    
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor_updated)
