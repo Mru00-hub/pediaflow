@@ -117,7 +117,7 @@ class PediaFlowPhysicsEngine:
         hct = input.hematocrit_pct
         if hct < 20.0:
             # Linear approx for severe anemia
-            viscosity = 0.5 + (0.02 * hct)
+            viscosity = 1.5 + (0.05 * hct)
         else:
             # Poiseuille approx
             viscosity = (hct / 45.0) ** 2.5
@@ -721,7 +721,11 @@ class PediaFlowPhysicsEngine:
         current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / true_co_est
         
         # 3. Blend: 95% Inertia, 5% New Target
-        svr_dynamic = (current_svr_est * 0.95) + (target_svr * 0.05)
+        if is_hypotensive:
+            inertia = 0.98   # emergency sympathetic constriction
+        else:
+            inertia = 0.995  # slow basal tone equilibration
+        svr_dynamic = (current_svr_est * inertia) + (target_svr * (1 - inertia))
         
         # 4. Clamp to safe limits
         svr_dynamic = max(200.0, min(svr_dynamic, 20000.0))
@@ -733,6 +737,16 @@ class PediaFlowPhysicsEngine:
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor_updated)
         derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
+        if params.weight_kg and params.weight_kg > 0 and state.current_glucose_mg_dl >= 0:
+            if params.target_map_mmhg and params.baseline_capillary_pressure_mmhg:
+                if params.afterload_sensitivity and params.cardiac_contractility:
+                    if params.reflection_coefficient_sigma < 0.6:  # septic / dengue physiology
+                        lactate_severity = 1.0
+                        if params.albumin_uncertainty_g_dl >= 0 and hasattr(params, "lactate_mmol_l"):
+                            lactate_severity = min(params.lactate_mmol_l / 4.0, 2.0)
+                        shunt_fraction = 0.3 * lactate_severity
+                        co_l_min = co_l_min * (1 - shunt_fraction)
+                        derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
         derived_map = max(30.0, min(derived_map, 160.0))
 
         # --- 3. STARLING FORCES (Capillary Leak) ---
@@ -754,6 +768,14 @@ class PediaFlowPhysicsEngine:
         if current_fluid.is_colloid and params.reflection_coefficient_sigma < 0.6:
             effective_kf *= 0.5 
 
+        if derived_map < 50:
+            capillary_recruitment = 2.0
+        elif preload_ratio < 0.8:
+            capillary_recruitment = 0.5
+        else:
+            capillary_recruitment = 1.0
+        effective_kf = effective_kf * capillary_recruitment
+
         q_leak = effective_kf * (hydrostatic_net - oncotic_net)
         q_leak = max(0.0, q_leak) # Fluid rarely flows back via capillaries alone
 
@@ -768,13 +790,16 @@ class PediaFlowPhysicsEngine:
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
+        baseline_gfr = 2.1  # ml/min per 10kg child (scaled by renal maturity)
         if perfusion_p < 30:
             q_urine = 0.0
         elif perfusion_p < 60:
             sigmoid = 1.0 / (1.0 + math.exp(-(perfusion_p - 45) / 5))
             q_urine = (perfusion_p - 30) * 0.03 * params.renal_maturity_factor * sigmoid
+        elif perfusion_p < 100:
+            q_urine = baseline_gfr * params.renal_maturity_factor
         else:
-            q_urine = (perfusion_p - 30) * 0.03 * params.renal_maturity_factor
+            q_urine = baseline_gfr * params.renal_maturity_factor * (1 + (perfusion_p - 100) * 0.01)
 
         # OSMOTIC SHIFT (Bidirectional)
         # Handles Hypertonic (water OUT) and Hypotonic (water IN)
@@ -930,6 +955,11 @@ class PediaFlowPhysicsEngine:
         # Intake
         glucose_conc_mg_l = fluid_props.glucose_g_l * 1000.0
         glucose_in_mg = (rate_min / 1000.0) * glucose_conc_mg_l * dt_minutes
+        stress_glucose_production = 0.0
+        if params.afterload_sensitivity > 1.0:  # shock physiology marker
+            stress_multiplier = 1.5 if state.current_glucose_mg_dl > 140 else 1.0
+            stress_glucose_production = 3.0 * params.weight_kg * stress_multiplier * dt_minutes
+        glucose_in_mg += stress_glucose_production
         
         # Utilization (Metabolic Burn)
         glucose_burn_mg = (params.glucose_utilization_mg_kg_min * params.weight_kg) * dt_minutes
