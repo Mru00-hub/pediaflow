@@ -425,6 +425,8 @@ class PediaFlowPhysicsEngine:
              # Reduce the "Optimal Preload" (Heart can't stretch as much)
              opt_preload *= 0.85 
              warnings.missing_optimal_inputs.append("Hepatomegaly Detected: Reduced Volume Tolerance")
+        if is_sam:
+            opt_preload *= 0.7
     
         # 1. Estimate Start Volume (Copying logic from initialize_simulation_state)
         # We need to know the *actual* blood volume at T=0 to calibrate SVR correctly.
@@ -790,7 +792,7 @@ class PediaFlowPhysicsEngine:
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
-        baseline_gfr = 2.1  # ml/min per 10kg child (scaled by renal maturity)
+        baseline_gfr = 2.1 * (params.weight_kg / 10.0)
         if perfusion_p < 30:
             q_urine = 0.0
         elif perfusion_p < 60:
@@ -951,6 +953,13 @@ class PediaFlowPhysicsEngine:
             new_potassium = state.current_potassium
         new_potassium = max(1.5, min(new_potassium, 12.0))
 
+        lactate_prod = 0.0
+        if perfusion_p < 50:
+            lactate_prod = (50 - perfusion_p) * 0.05
+        lactate_clear = state.current_lactate_mmol_l * (0.1 if fluxes['derived_map'] > 60 else 0.03)
+        new_lactate = state.current_lactate_mmol_l + (lactate_prod - lactate_clear) * dt_minutes
+        new_lactate = max(0.5, min(new_lactate, 20.0))
+
         # C. GLUCOSE DYNAMICS (Intake - Utilization - Excretion)
         # Intake
         glucose_conc_mg_l = fluid_props.glucose_g_l * 1000.0
@@ -1021,7 +1030,8 @@ class PediaFlowPhysicsEngine:
             q_ongoing_loss_ml_min=state.q_ongoing_loss_ml_min,
             q_insensible_loss_ml_min=state.q_insensible_loss_ml_min,
             cumulative_bolus_count=state.cumulative_bolus_count,
-            time_since_last_bolus_min=state.time_since_last_bolus_min + dt_minutes
+            time_since_last_bolus_min=state.time_since_last_bolus_min + dt_minutes,
+            current_lactate_mmol_l=new_lactate,
         ) 
 
     @staticmethod
