@@ -416,10 +416,6 @@ class PediaFlowPhysicsEngine:
         if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
             afterload_sens = 1.1
 
-        # Interstitial Compliance (Stiffer in SAM = faster edema)
-        # Replaces the magic number logic
-        interstitial_compliance = 50.0 if input.muac_cm < 11.5 else 100.0
-
         # 2. Calculate Baseline Capillary Pressure
         # Normal = 25 mmHg. 
         # Deep Shock = 15 mmHg (shut down). Compensated = 20 mmHg.
@@ -832,7 +828,7 @@ class PediaFlowPhysicsEngine:
         lymph_drive = 0.2 + max(0.0, (state.p_interstitial_mmHg + 2.0) / 4.0)
         # Cap at 3x
         lymph_drive = min(lymph_drive, 3.0)
-        if input.muac_cm < 11.5:
+        if params.is_sam:
             lymphatic_efficiency = 0.4  # Poor lymphatic function
         else:
             lymphatic_efficiency = 1.0
