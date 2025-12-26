@@ -506,7 +506,8 @@ class PediaFlowPhysicsEngine:
         final_sens = afterload_sens
         if final_svr > 3000:
             final_sens = afterload_sens * 0.5
-        
+
+        final_starting_volume = current_v_blood_est
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
@@ -542,7 +543,8 @@ class PediaFlowPhysicsEngine:
             afterload_sensitivity=final_sens,
             baseline_capillary_pressure_mmhg=base_pc,
             optimal_preload_ml=opt_preload,
-            target_cvp_mmhg=assumed_cvp
+            target_cvp_mmhg=assumed_cvp,
+            final_starting_blood_volume_l=final_starting_volume
         )
 
     @staticmethod
@@ -566,8 +568,7 @@ class PediaFlowPhysicsEngine:
         # Therefore: ExcessVol = (StartCVP - 3.0) * Compliance
         # This ensures that when the simulator calculates CVP at T=1, it gets exactly 'start_cvp'.
         
-        vol_excess_ml = (start_cvp - 3.0) * params.venous_compliance_ml_mmhg
-        current_v_blood = params.v_blood_normal_l + (vol_excess_ml / 1000.0)
+        current_v_blood = params.final_starting_blood_volume_l
         
         # Safety Floor for Blood Volume (Prevent negative volumes in severe shock math)
         min_v_blood = params.v_blood_normal_l * 0.4 
@@ -663,7 +664,8 @@ class PediaFlowPhysicsEngine:
              # Sympathetic Compensation
              # If very empty (<0.8), heart rate/contractility rises to maintain output
              if preload_ratio < 0.8:
-                 compensatory_boost = 1.0 + (0.8 - preload_ratio) * 0.8
+                 max_boost = 0.3 * params.cardiac_contractility
+                 compensatory_boost = 1.0 + (0.8 - preload_ratio) * max_boost
                  preload_efficiency = preload_ratio * compensatory_boost
              else:
                  preload_efficiency = preload_ratio 
@@ -718,14 +720,18 @@ class PediaFlowPhysicsEngine:
         # 2. Calculate current implied SVR based on physics
         current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / true_co_est
         
-        # 3. Blend: 90% Inertia, 10% New Target
-        svr_dynamic = (current_svr_est * 0.9) + (target_svr * 0.1)
+        # 3. Blend: 95% Inertia, 5% New Target
+        svr_dynamic = (current_svr_est * 0.95) + (target_svr * 0.05)
         
         # 4. Clamp to safe limits
         svr_dynamic = max(200.0, min(svr_dynamic, 20000.0))
-        
+
+        normalized_svr_dynamic = svr_dynamic / 1000.0
+        denom_dynamic = 1.0 + (normalized_svr_dynamic - 1.0) * params.afterload_sensitivity
+        afterload_factor_updated = 1.0 / max(0.5, denom_dynamic)
+                                   
         # Recalculate CO and MAP
-        co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor)
+        co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor_updated)
         derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
         derived_map = max(30.0, min(derived_map, 160.0))
 
@@ -762,10 +768,13 @@ class PediaFlowPhysicsEngine:
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
-        if perfusion_p < 35:
+        if perfusion_p < 30:
             q_urine = 0.0
+        elif perfusion_p < 60:
+            sigmoid = 1.0 / (1.0 + math.exp(-(perfusion_p - 45) / 5))
+            q_urine = (perfusion_p - 30) * 0.03 * params.renal_maturity_factor * sigmoid
         else:
-            q_urine = (perfusion_p - 35) * 0.05 * params.renal_maturity_factor
+            q_urine = (perfusion_p - 30) * 0.03 * params.renal_maturity_factor
 
         # OSMOTIC SHIFT (Bidirectional)
         # Handles Hypertonic (water OUT) and Hypotonic (water IN)
@@ -868,7 +877,9 @@ class PediaFlowPhysicsEngine:
         # Hematocrit (Dilution)
         # Prevent division by zero if new_v_blood is impossibly low
         safe_v_blood = max(new_v_blood, 0.1)
-        new_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / safe_v_blood
+        mixing_factor = 1.0 - math.exp(-dt_minutes / 5.0)
+        instant_hct = (state.v_blood_current_l * state.current_hematocrit_dynamic) / safe_v_blood
+        new_hct = state.current_hematocrit_dynamic + (instant_hct - state.current_hematocrit_dynamic) * mixing_factor
         new_hct = max(5.0, min(new_hct, 70.0))
         
         # --- PHASE 2: METABOLICS (LAB VALUES) ---
