@@ -572,6 +572,8 @@ class PediaFlowPhysicsEngine:
         # The solver balanced SVR based on 'params.target_cvp_mmhg'. 
         # We MUST start there, or the physics will explode.
         start_cvp = params.target_cvp_mmhg
+        current_v_inter = params.v_inter_normal_l
+        start_p_inter = -2.0 
 
         if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
             baseline_edema_ml = input.weight_kg * 10  # ~10ml/kg chronic third-spacing
