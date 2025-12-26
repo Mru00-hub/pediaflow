@@ -907,7 +907,7 @@ class PediaFlowPhysicsEngine:
         # Subtract ongoing pathological losses (diarrhea/bleeding)
         dv_blood -= (state.q_ongoing_loss_ml_min * 0.25) * dt_minutes
 
-        new_v_blood = state.v_blood_current_l + (dv_blood / 1000.0)
+        new_v_blood = max(state.v_blood_current_l + (dv_blood / 1000.0), params.v_blood_normal_l * 0.4)
         
         # Interstitial gains leak + free water (if any), loses lymph
         dv_inter = (fluxes['q_leak'] - fluxes['q_lymph'] + (rate_min * (1-vol_dist))) * dt_minutes
@@ -916,11 +916,10 @@ class PediaFlowPhysicsEngine:
         # Adjust for osmotic shift (water moving to cells)
         dv_inter -= fluxes['q_osmotic'] * dt_minutes
 
-        new_v_inter = state.v_interstitial_current_l + (dv_inter / 1000.0)
+        new_v_inter = max(state.v_interstitial_current_l + (dv_inter / 1000.0), 0.1)
 
         # Intracellular gains osmotic shift
-        dv_icf = fluxes['q_osmotic'] * dt_minutes
-        new_v_icf = state.v_intracellular_current_l + (dv_icf / 1000.0)
+        new_v_icf = state.v_intracellular_current_l + (fluxes['q_osmotic'] * dt_minutes / 1000.0)
 
         # 3. Update Pressures (Compliance Logic)
         # CVP (Veins are compliant but stiffen when full)
@@ -930,11 +929,8 @@ class PediaFlowPhysicsEngine:
 
         # Interstitial Pressure (Only rises if edema present)
         inter_excess = (new_v_inter - params.v_inter_normal_l) * 1000
-        if inter_excess > 0:
-            # Use the calculated compliance parameter instead of * 100.0
-            new_p_inter = inter_excess / params.interstitial_compliance_ml_mmhg
-        else:
-            new_p_inter = -2.0
+        new_p_inter = inter_excess / params.interstitial_compliance_ml_mmhg if inter_excess > 0 else -2.0
+        new_map = (fluxes['derived_map'] + ((new_cvp - state.cvp_mmHg) * 0.5))
 
         # 4. Update General Safety Trackers
         new_total_vol = state.total_volume_infused_ml + (rate_min * dt_minutes)
@@ -1039,13 +1035,14 @@ class PediaFlowPhysicsEngine:
             
             # Updated Volumes
             v_blood_current_l=new_v_blood,
-            v_interstitial_current_l=max(new_v_inter, 0.1),
+            v_interstitial_current_l=new_v_inter,
             v_intracellular_current_l=new_v_icf,
             
             # Updated Pressures
             cvp_mmHg=new_cvp,
             pcwp_mmHg=new_cvp * 1.2, 
             p_interstitial_mmHg=new_p_inter,
+            map_mmHg=new_map,
             
             # Fluxes Used
             q_infusion_ml_min=rate_min,
