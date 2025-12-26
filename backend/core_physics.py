@@ -373,7 +373,17 @@ class PediaFlowPhysicsEngine:
 
         # SAM Logic: Tissue Compliance
         is_sam = input.muac_cm < 11.5
-        tissue_compliance = 0.5 if is_sam else 1.0 # Floppy tissue if SAM
+        if is_sam:
+            tissue_compliance = 0.3  # More floppy (LOWER = MORE compliant)
+            interstitial_compliance = 30.0  # **LOWER compliance = FASTER edema**
+            # ADD: Reduced capillary surface area
+            capillary_recruitment_base = 0.7  # SAM microvascular rarefaction
+        else:
+            tissue_compliance = 1.0
+            interstitial_compliance = 100.0
+            capillary_recruitment_base = 1.0
+        
+        # Store recruitment base in params for derivatives
         sodium_bias = 1.2 if is_sam else 1.0 # Cells hold sodium if SAM
 
         # Target Generation
@@ -546,7 +556,9 @@ class PediaFlowPhysicsEngine:
             baseline_capillary_pressure_mmhg=base_pc,
             optimal_preload_ml=opt_preload,
             target_cvp_mmhg=assumed_cvp,
-            final_starting_blood_volume_l=final_starting_volume
+            final_starting_blood_volume_l=final_starting_volume,
+            is_sam=is_sam,
+            capillary_recruitment_base=capillary_recruitment_base
         )
 
     @staticmethod
@@ -564,7 +576,12 @@ class PediaFlowPhysicsEngine:
         # The solver balanced SVR based on 'params.target_cvp_mmhg'. 
         # We MUST start there, or the physics will explode.
         start_cvp = params.target_cvp_mmhg
-        
+
+        if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
+            baseline_edema_ml = input.weight_kg * 10  # ~10ml/kg chronic third-spacing
+            current_v_inter += baseline_edema_ml / 1000.0
+            start_p_inter = max(start_p_inter, 1.0)  # Subtle +1mmHg baseline
+            
         # 3. Back-Calculate Blood Volume from CVP
         # Physics: CVP = 3.0 + (ExcessVol / Compliance)
         # Therefore: ExcessVol = (StartCVP - 3.0) * Compliance
@@ -579,7 +596,13 @@ class PediaFlowPhysicsEngine:
         # 4. Interstitial Volume Initialization
         # If we have wet lungs (high CVP/PCWP), we likely have interstitial edema too.
         current_v_inter = params.v_inter_normal_l
-        start_p_inter = -2.0 # Default Dry
+        start_p_inter = -2.0
+        
+        # ADD SAM/Sepsis baseline AFTER initialization:
+        if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
+            baseline_edema_ml = input.weight_kg * 10
+            current_v_inter += baseline_edema_ml / 1000.0
+            start_p_inter = max(start_p_inter, 1.0)
         
         # If CVP is high (>8), assume some leak has occurred
         if start_cvp > 8.0:
@@ -670,17 +693,20 @@ class PediaFlowPhysicsEngine:
         # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
         safe_preload_ml = max(params.optimal_preload_ml, 10.0)  # Minimum 10ml optimal preload
         preload_ratio = current_blood_ml / safe_preload_ml
+        is_sam = params.is_sam 
+        capillary_recruitment_base = params.capillary_recruitment_base
         
         # B. Frank-Starling Curve Implementation 
         # Linear rise up to 1.0 (Optimal), then plateau, then failure.
         if preload_ratio <= 1.0:
              # Sympathetic Compensation
              # If very empty (<0.8), heart rate/contractility rises to maintain output
-             if preload_ratio < 0.8:
+             if preload_ratio < 0.8 and not params.is_sam:
                  max_boost = 0.3 * params.cardiac_contractility
                  compensatory_boost = 1.0 + (0.8 - preload_ratio) * max_boost
                  preload_efficiency = preload_ratio * compensatory_boost
              else:
+                 compensatory_boost = 1.0 
                  preload_efficiency = preload_ratio 
         elif preload_ratio <= 1.2:
              # Plateau (Optimal stretch)
@@ -735,11 +761,12 @@ class PediaFlowPhysicsEngine:
         current_svr_est = (state.map_mmHg - state.cvp_mmHg) * 80 / true_co_est
         
         # 3. Blend: 95% Inertia, 5% New Target
-        if is_hypotensive:
-            inertia = 0.98   # emergency sympathetic constriction
-        else:
-            inertia = 0.995  # slow basal tone equilibration
+        inertia = 0.999 if not is_hypotensive else 0.995
         svr_dynamic = (current_svr_est * inertia) + (target_svr * (1 - inertia))
+        
+        if params.is_sam:
+            svr_dynamic = min(svr_dynamic, params.svr_resistance * 1.2)  # Cap compensation
+            svr_dynamic = max(svr_dynamic, params.svr_resistance * 0.6)  # Floor for vasodilatory tendency
         
         # 4. Clamp to safe limits
         svr_dynamic = max(200.0, min(svr_dynamic, 20000.0))
@@ -789,6 +816,10 @@ class PediaFlowPhysicsEngine:
             capillary_recruitment = 0.5
         else:
             capillary_recruitment = 1.0
+
+        capillary_recruitment = capillary_recruitment_base * capillary_recruitment
+        if params.is_sam:  # Prevent over-recruitment
+            capillary_recruitment = min(capillary_recruitment, 0.8)
         effective_kf = effective_kf * capillary_recruitment
 
         q_leak = effective_kf * (hydrostatic_net - oncotic_net)
@@ -801,7 +832,11 @@ class PediaFlowPhysicsEngine:
         lymph_drive = 0.2 + max(0.0, (state.p_interstitial_mmHg + 2.0) / 4.0)
         # Cap at 3x
         lymph_drive = min(lymph_drive, 3.0)
-        q_lymph = params.lymphatic_drainage_capacity_ml_min * lymph_drive
+        if input.muac_cm < 11.5:
+            lymphatic_efficiency = 0.4  # Poor lymphatic function
+        else:
+            lymphatic_efficiency = 1.0
+        q_lymph = params.lymphatic_drainage_capacity_ml_min * lymph_drive * lymphatic_efficiency
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
@@ -1013,7 +1048,7 @@ class PediaFlowPhysicsEngine:
             
             # Updated Volumes
             v_blood_current_l=new_v_blood,
-            v_interstitial_current_l=new_v_inter,
+            v_interstitial_current_l=max(new_v_inter, 0.1),
             v_intracellular_current_l=new_v_icf,
             
             # Updated Pressures
@@ -1030,7 +1065,8 @@ class PediaFlowPhysicsEngine:
             q_osmotic_shift_ml_min=fluxes['q_osmotic'],
             
             # Safety Trackers
-            total_volume_infused_ml=new_total_vol,
+            time_minutes=state.time_minutes + dt_minutes,
+            total_volume_infused_ml=state.total_volume_infused_ml + (rate_min * dt_minutes),
             total_sodium_load_meq=new_sodium_load,
             current_hematocrit_dynamic=new_hct,
             current_weight_dynamic_kg=state.current_weight_dynamic_kg + ((rate_min - fluxes['q_urine'])/1000 * dt_minutes),
