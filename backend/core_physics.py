@@ -939,7 +939,7 @@ class PediaFlowPhysicsEngine:
         urine_na_conc = 20.0 if state.map_mmHg < 65 else 80.0
         na_out_meq = q_urine_l_min * urine_na_conc * dt_minutes
         
-        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l)
+        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l + state.v_intracellular_current_l)
         
         # Calculate new concentration
         if total_water_l > 0:
