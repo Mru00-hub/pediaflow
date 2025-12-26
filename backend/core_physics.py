@@ -660,7 +660,8 @@ class PediaFlowPhysicsEngine:
         current_blood_ml = state.v_blood_current_l * 1000.0
         
         # Ratio: 1.0 = Perfect Stretch. <1.0 = Empty. >1.2 = Overloaded.
-        preload_ratio = current_blood_ml / params.optimal_preload_ml
+        safe_preload_ml = max(params.optimal_preload_ml, 10.0)  # Minimum 10ml optimal preload
+        preload_ratio = current_blood_ml / safe_preload_ml
         
         # B. Frank-Starling Curve Implementation 
         # Linear rise up to 1.0 (Optimal), then plateau, then failure.
@@ -746,7 +747,7 @@ class PediaFlowPhysicsEngine:
                 if params.afterload_sensitivity and params.cardiac_contractility:
                     if params.reflection_coefficient_sigma < 0.6:  # septic / dengue physiology
                         lactate_severity = 1.0
-                        if params.albumin_uncertainty_g_dl >= 0 and hasattr(params, "lactate_mmol_l"):
+                        if params.reflection_coefficient_sigma < 0.6:
                             lactate_severity = min(state.current_lactate_mmol_l / 4.0, 2.0)
                             shunt_fraction = 0.3 * lactate_severity
                             co_l_min = co_l_min * (1 - shunt_fraction)
@@ -794,16 +795,16 @@ class PediaFlowPhysicsEngine:
 
         # Urine (Linear approximation based on perfusion)
         perfusion_p = derived_map - state.cvp_mmHg
-        baseline_gfr = 2.1 * (params.weight_kg / 10.0)
+        baseline_gfr = 2.1 * (params.weight_kg / 10.0) * params.renal_maturity_factor
         if perfusion_p < 30:
             q_urine = 0.0
         elif perfusion_p < 60:
             sigmoid = 1.0 / (1.0 + math.exp(-(perfusion_p - 45) / 5))
             q_urine = (perfusion_p - 30) * 0.03 * params.renal_maturity_factor * sigmoid
         elif perfusion_p < 100:
-            q_urine = baseline_gfr * params.renal_maturity_factor
+            q_urine = baseline_gfr 
         else:
-            q_urine = baseline_gfr * params.renal_maturity_factor * (1 + (perfusion_p - 100) * 0.01)
+            q_urine = baseline_gfr * (1 + (perfusion_p - 100) * 0.01)
 
         # OSMOTIC SHIFT (Bidirectional)
         # Handles Hypertonic (water OUT) and Hypotonic (water IN)
@@ -928,7 +929,7 @@ class PediaFlowPhysicsEngine:
         urine_na_conc = 20.0 if state.map_mmHg < 65 else 80.0
         na_out_meq = q_urine_l_min * urine_na_conc * dt_minutes
         
-        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l + state.v_intracellular_current_l)
+        current_total_na = state.current_sodium * (state.v_blood_current_l + state.v_interstitial_current_l)
         
         # Calculate new concentration
         if total_water_l > 0:
