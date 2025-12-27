@@ -339,8 +339,8 @@ class PediaFlowPhysicsEngine:
                 sigma = 0.7 # Recovery
         
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
-            sigma = 0.4
-            k_f_base = 0.02
+            sigma = 0.35
+            k_f_base = 0.035
             
         # Continuous Albumin Estimation
         albumin = input.plasma_albumin_g_dl
@@ -358,14 +358,13 @@ class PediaFlowPhysicsEngine:
         pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
 
         # Glucose Stress Logic
-        glucose_burn = 2.0 if input.age_months < 1 else 1.5
+        glucose_burn = 2.5 # Base mg/kg/min (Neonates/Infants need ~4-6, but in shock we consume reserves)
+        
+        if input.age_months > 12: 
+            glucose_burn = 2.0 # Older kids burn less per kg
+        # Stress Modifiers (Reduced aggressiveness)
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
-            glucose_burn *= 1.5 # Stress
-        if input.age_months < 3: # Low glycogen stores
-            glucose_burn *= 1.2
-        # Lactate Logic (Tissue Hypoxia)
-        if input.lactate_mmol_l and input.lactate_mmol_l > 4.0:
-            glucose_burn *= 1.5 # High stress
+            glucose_burn *= 1.2 # [FIX] Reduced from 1.5
             
         # Platelet Logic (Bleeding Risk)
         if input.platelet_count and input.platelet_count < 20000:
@@ -382,6 +381,10 @@ class PediaFlowPhysicsEngine:
             tissue_compliance = 1.0
             interstitial_compliance = 100.0
             capillary_recruitment_base = 1.0
+
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK and input.sp_o2_percent < 90:
+             interstitial_compliance = 40.0 # Stiff lungs
+             warnings.missing_optimal_inputs.append("Hypoxic Septic Shock: High ARDS Risk Mode")
         
         # Store recruitment base in params for derivatives
         sodium_bias = 1.2 if is_sam else 1.0 # Cells hold sodium if SAM
@@ -721,7 +724,7 @@ class PediaFlowPhysicsEngine:
         else:
              # Failure: Heart is overstretched, output drops
              overstretch = preload_ratio - 1.2
-             preload_efficiency = max(0.4, 1.0 - (overstretch * 1.5))
+             preload_efficiency = max(0.7, 1.0 - (overstretch * 0.5))
 
         # C. Afterload Penalty (SVR opposing flow)
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
