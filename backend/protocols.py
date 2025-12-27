@@ -39,54 +39,95 @@ class PrescriptionEngine:
     @staticmethod
     def generate_bolus(input: PatientInput, fluid: FluidType) -> dict:
         # SAM Protocol: Slower, smaller volume (10ml/kg over 1 hr)
+        volume = 0
+        duration = 60 # Default to slower infusion for safety
+        
         is_sam = input.muac_cm < 11.5
-        diagnosis = input.diagnosis
-
+        is_septic = input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK
+        if input.age_months < 2: 
+            rr_limit = 60
+        elif input.age_months < 12: 
+            rr_limit = 50
+        elif input.age_months < 60: 
+            rr_limit = 40
+        else: 
+            rr_limit = 30 # >5 years
+        is_hypoxic = input.sp_o2_percent < 92
+        is_resp_distress = input.respiratory_rate_bpm >= rr_limit
+        has_congestion_signs = input.baseline_hepatomegaly or is_hypoxic or is_resp_distress
+        if input.age_months < 1:
+            systolic_floor = 60
+        elif input.age_months < 12:
+            systolic_floor = 70
+        elif input.age_months <= 120: # 1-10 years
+            systolic_floor = 70 + (2 * (input.age_months / 12.0))
+        else: # > 10 years
+            systolic_floor = 90
+            
+        is_hypotensive = input.systolic_bp < systolic_floor
+        
+        # --- VOLUME CALCULATION ---
         if fluid == FluidType.D5_NS:
-             # Check the actual glucose to decide dose size
-             # (Handle None safely by defaulting to 90)
+             # Hypoglycemia Management
              current_g = input.current_glucose if input.current_glucose is not None else 90.0
-             
              if current_g < 54.0:
-                 # A. CRITICAL HYPOGLYCEMIA (< 54 mg/dL)
-                 # Priority: Immediate Sugar Load + Volume.
-                 # Dose: Full Shock Bolus (10 ml/kg)
-                 volume = int(input.weight_kg * 10)
-                 duration = 30 # Slower than saline to prevent rapid osmotic shift
+                 volume = int(input.weight_kg * 10) # Critical: 10ml/kg
+                 duration = 30 
              else:
-                 # B. PROACTIVE BUFFER (54 - 90 mg/dL)
-                 # Priority: Prevent crash, but don't cause Hyperglycemia/Overload.
-                 # Dose: Half Bolus (5 ml/kg)
-                 volume = int(input.weight_kg * 5)
+                 volume = int(input.weight_kg * 5)  # Buffer: 5ml/kg
                  duration = 30
 
-        # 1. Specific Dosing for Blood Products
         elif fluid == FluidType.PRBC:
-            # SAFETY: Never give 20ml/kg Blood as a rapid bolus.
-            # Standard: 10ml/kg. 
-            # Duration: Emergency = 60 mins, Standard = 240 mins.
-            # We assume Emergency here since it's a shock calculator.
             volume = int(input.weight_kg * 10)
-            duration = 240 # Slower than crystalloid (20 mins)
+            duration = 240 # Standard blood time
+
         elif fluid == FluidType.COLLOID_ALBUMIN:
-             # Colloids are potent expanders. 10-20ml/kg.
-             volume = int(input.weight_kg * 10) # Conservative start
-             duration = 20
+             volume = int(input.weight_kg * 10)
+             duration = 30
+
         else:
-            # A. PURE VOLUME LOSS (Diarrhea/Vomiting)
-            # The tank has a leak. We must refill it.
-            if diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
-                 # WHO "Plan C"
-                 volume = int(input.weight_kg * 20)
-                 duration = 60 if is_sam else 20 # Slower if malnutrition
+            # CRYSTALLOIDS (RL/NS) - The Core Shock Logic
+            if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
+                 # Pure fluid loss (Diarrhea) = Aggressive refill allowed
+                 volume = int(input.weight_kg * 20) # Plan C
+                 duration = 60 if is_sam else 30
             
-            # B. DISTRIBUTIVE SHOCK (Sepsis/Dengue/Unknown)
-            # The tank is leaky/weak. DO NOT OVERFILL.
-            # FEAST Trial / WHO 2022 Conservative Protocol
+            elif is_septic:
+                 # SEPTIC SHOCK: 20ml/kg first hour (WHO / Surviving Sepsis)
+                 # Note: Aggressive 15-min boluses are debated; 60 min is safer default.
+                 volume = int(input.weight_kg * 20)
+                 if is_sam: volume = int(input.weight_kg * 15)
+
+                 # 2. Duration Determination
+                 # Baseline: 60 minutes (Safe for compensated shock/unknown status)
+                 duration = 60 
+
+                 # 3. RAPID RESCUE OVERRIDE (The "Fast Bolus")
+                 # Criteria: Hypotensive (Decompensated) AND "Dry" (Safe to fill)
+                 
+                 # Calc Hypotension Threshold (PALS approx: 70 + 2*age_years)
+                 if is_hypotensive and not is_sam and not has_congestion_signs:
+                     duration = 20 # Fast push to restore BP
+                     # Rationale: Restore perfusion pressure immediately to prevent arrest.
+                
+            elif is_sam:
+                 # Undifferentiated Shock + SAM
+                 volume = int(input.weight_kg * 15)
+                 duration = 60
+                 
             else:
-                 volume = int(input.weight_kg * 10) # [CHANGED FROM 20]
-                 duration = 60 if is_sam else 20
-        
+                 # Undifferentiated Shock (Healthy child)
+                 volume = int(input.weight_kg * 20)
+                 duration = 45
+                
+        # --- SAFETY BRAKES (Overrides everything else) ---
+        # If the lungs are ALREADY wet or failing, we must slow down, 
+        # even if hypotensive (Start inotropes instead of flooding).
+        if has_congestion_signs:
+            duration = max(duration, 60)
+            if input.sp_o2_percent < 85: # Severe Hypoxia
+                 duration = max(duration, 90) # Trickle
+                
         # Calculate Flow Rate
         rate_ml_hr = (volume / duration) * 60
         
