@@ -418,7 +418,7 @@ class PediaFlowPhysicsEngine:
         # SAM or Hypothermia = 1.5 (Weak hearts give up easily).
         afterload_sens = 0.2 
         if input.muac_cm < 11.5 or input.temp_celsius < 36.0:
-            afterload_sens = 1.1
+            afterload_sens = 0.5
 
         # 2. Calculate Baseline Capillary Pressure
         # Normal = 25 mmHg. 
@@ -752,7 +752,8 @@ class PediaFlowPhysicsEngine:
         normalized_svr = params.svr_resistance / 1000.0
         denom = 1.0 + (normalized_svr - 1.0) * params.afterload_sensitivity
         raw_factor = 1.0 / max(0.1, denom)
-        afterload_factor = max(0.3, raw_factor)
+        afterload_factor = max(0.5, raw_factor) 
+        print(f"DEBUG Hemodynamics: SVR={params.svr_resistance:.0f} -> Afterload_Factor={afterload_factor:.2f}")
 
         # Dynamic SVR 
         # SVR adjusts to CVP changes (Baroreflex). 
@@ -1064,7 +1065,8 @@ class PediaFlowPhysicsEngine:
         # Domain: Blood Volume (rapid equilibration)
         
         # 1. Mass (mg) = mg/dL * dL (Vol*10)
-        current_gluc_mass_mg = state.current_glucose_mg_dl * (state.v_blood_current_l * 10.0)
+        current_ecf_dl = (state.v_blood_current_l + state.v_interstitial_current_l) * 10.0
+        current_gluc_mass_mg = state.current_glucose_mg_dl * current_ecf_dl
         
         # 2. Influx (fluid g/L -> mg/L -> mg total)
         gluc_influx_mg = (fluid_props.glucose_g_l * 1000.0) * step_infusion_l
@@ -1078,7 +1080,10 @@ class PediaFlowPhysicsEngine:
             
         gluc_consumption_mg = (params.weight_kg * burn_rate) * dt_minutes
         
-        new_gluc_conc = (current_gluc_mass_mg + gluc_influx_mg - gluc_consumption_mg) / (new_v_blood * 10.0)
+        new_ecf_dl = (new_v_blood + new_v_inter) * 10.0
+        new_gluc_conc = (current_gluc_mass_mg + gluc_influx_mg - gluc_consumption_mg) / new_ecf_dl
+        
+        print(f"DEBUG Glucose: Mass={current_gluc_mass_mg:.0f} + In={gluc_influx_mg:.0f} - Burn={gluc_consumption_mg:.0f} | Vol={new_ecf_dl/10:.2f}L -> {new_gluc_conc:.0f} mg/dL")
         new_glucose = max(10.0, min(new_gluc_conc, 800.0))
 
         # --- E. LACTATE & WEIGHT ---
