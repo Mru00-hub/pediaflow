@@ -358,13 +358,14 @@ class PediaFlowPhysicsEngine:
         pi_plasma = (2.1 * albumin) + (0.16 * (albumin**2)) + (0.009 * (albumin**3))
 
         # Glucose Stress Logic
-        glucose_burn = 2.5 # Base mg/kg/min (Neonates/Infants need ~4-6, but in shock we consume reserves)
+        glucose_burn = 0.15 # Base mg/kg/min (Neonates/Infants need ~4-6, but in shock we consume reserves)
         
         if input.age_months > 12: 
-            glucose_burn = 2.0 # Older kids burn less per kg
-        # Stress Modifiers (Reduced aggressiveness)
+            glucose_burn = 0.12 # Older kids burn less per kg
+            
+        # Stress Modifiers
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
-            glucose_burn *= 1.2 # [FIX] Reduced from 1.5
+            glucose_burn *= 1.5 # Hypermetabolism
             
         # Platelet Logic (Bleeding Risk)
         if input.platelet_count and input.platelet_count < 20000:
@@ -709,7 +710,8 @@ class PediaFlowPhysicsEngine:
         CALCULATES FLUXES (The Physics Core).
         Now includes 'Smart' Frank-Starling and Sodium logic.
         """
-        
+        print(f"\n🔍 T={state.time_minutes:.0f}min | MAP={state.map_mmHg:.1f} | Glucose={state.current_glucose_mg_dl:.1f}")
+        print(f"   Infusion={infusion_rate_ml_min:.1f}ml/min | Vblood={state.v_blood_current_l*1000:.0f}ml")
         # --- 1. ADVANCED HEMODYNAMICS (Frank-Starling Curve) ---
         # Instead of linear increase, we use a curve:
         # Volume -> Stretch -> Output (until heart is overstretched)
@@ -725,6 +727,7 @@ class PediaFlowPhysicsEngine:
         
         # B. Frank-Starling Curve Implementation 
         # Linear rise up to 1.0 (Optimal), then plateau, then failure.
+        print(f"DEBUG FS: preload_ratio={preload_ratio:.3f}, v_blood_ml={current_blood_ml:.0f}")
         if preload_ratio <= 1.0:
              # Sympathetic Compensation
              # If very empty (<0.8), heart rate/contractility rises to maintain output
@@ -735,13 +738,14 @@ class PediaFlowPhysicsEngine:
              else:
                  compensatory_boost = 1.0 
                  preload_efficiency = preload_ratio 
-        elif preload_ratio <= 1.2:
+        elif preload_ratio <= 1.3:
              # Plateau (Optimal stretch)
              preload_efficiency = 1.0 
         else:
              # Failure: Heart is overstretched, output drops
-             overstretch = preload_ratio - 1.2
-             preload_efficiency = max(0.7, 1.0 - (overstretch * 0.5))
+             overstretch = preload_ratio - 1.3
+             preload_efficiency = max(0.85, 1.0 - (overstretch * 0.3))
+        print(f"DEBUG FS: efficiency={preload_efficiency:.3f}")
 
         # C. Afterload Penalty (SVR opposing flow)
         # Sepsis/Dengue often have low SVR (easier flow), Cold Shock has high SVR (harder flow)
@@ -806,17 +810,9 @@ class PediaFlowPhysicsEngine:
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor_updated)
         derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
-        if params.weight_kg and params.weight_kg > 0 and state.current_glucose_mg_dl >= 0:
-            if params.target_map_mmhg and params.baseline_capillary_pressure_mmhg:
-                if params.afterload_sensitivity and params.cardiac_contractility:
-                    if params.reflection_coefficient_sigma < 0.6:  # septic / dengue physiology
-                        lactate_severity = 1.0
-                        if params.reflection_coefficient_sigma < 0.6:
-                            lactate_severity = min(state.current_lactate_mmol_l / 4.0, 2.0)
-                            shunt_fraction = 0.3 * lactate_severity
-                            co_l_min = co_l_min * (1 - shunt_fraction)
-                            derived_map = (co_l_min * svr_dynamic / 80.0) + state.cvp_mmHg
         derived_map = max(30.0, min(derived_map, 160.0))
+        
+        print(f"🎯 FINAL: CO={co_l_min:.3f}L/min → MAP={derived_map:.1f} | SVR={svr_dynamic:.0f}")
 
         # --- 3. STARLING FORCES (Capillary Leak) ---
         # Scale Pc relative to baseline state
