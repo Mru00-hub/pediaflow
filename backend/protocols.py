@@ -68,14 +68,24 @@ class PrescriptionEngine:
         
         # --- VOLUME CALCULATION ---
         if fluid == FluidType.D5_NS:
-             # Hypoglycemia Management
+             # 1. Base Hypoglycemia Dosing
              current_g = input.current_glucose if input.current_glucose is not None else 90.0
              if current_g < 54.0:
-                 volume = int(input.weight_kg * 10) # Critical: 10ml/kg
-                 duration = 30 
+                 volume = int(input.weight_kg * 10) # Critical Hypoglycemia
              else:
-                 volume = int(input.weight_kg * 5)  # Buffer: 5ml/kg
-                 duration = 30
+                 volume = int(input.weight_kg * 5)  # Buffer Hypoglycemia
+                 
+             # 2. SHOCK OVERRIDE (The Fix)
+             # If the patient HAS Shock, 5ml/kg is not enough volume. 
+             # We must upgrade to the appropriate Shock bolus size (15 or 20ml/kg),
+             # while still using the D5NS fluid selected by the FluidSelector.
+             if is_septic or input.diagnosis == ClinicalDiagnosis.DENGUE_SHOCK:
+                 shock_volume = int(input.weight_kg * (15 if is_sam else 20))
+                 # Take the larger of the two (Shock requirement > Sugar requirement)
+                 volume = max(volume, shock_volume)
+                 
+             # 3. Duration stays conservative for Dextrose
+             duration = 60 if is_sam else 30
 
         elif fluid == FluidType.PRBC:
             volume = int(input.weight_kg * 10)
