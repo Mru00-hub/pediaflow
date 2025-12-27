@@ -891,11 +891,11 @@ class PediaFlowPhysicsEngine:
             # We compare against a stable baseline (e.g. 140/TBW roughly) or simply the fluid tonicity vs plasma.
             
             # Simpler approach: Compare fluid Na to Plasma Na (assumed 140)
-            tonic_diff = 140.0 - current_fluid.sodium_meq_l
+            tonic_diff = state.current_sodium - current_fluid.sodium_meq_l
             # If Fluid is 154 (NS), Diff is -14 (Hypertonic) -> Drive is negative -> Water out of cells
             # If Fluid is 0 (D5), Diff is 140 (Hypotonic) -> Drive is positive -> Water into cells
             
-            q_osmotic = (infusion_rate_ml_min / 1000.0) * tonic_diff * (params.osmotic_conductance_k * 0.1) * params.intracellular_sodium_bias
+            q_osmotic = (infusion_rate_ml_min / 1000.0) * tonic_diff * (params.osmotic_conductance_k * 0.05) * params.intracellular_sodium_bias
             
             # Add Glucose Effect (Metabolizes to free water -> into cells)
             if current_fluid.glucose_g_l > 0:
