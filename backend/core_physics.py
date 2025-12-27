@@ -125,7 +125,7 @@ class PediaFlowPhysicsEngine:
         # Clamp values to prevent mathematical explosion or division by zero
         # Floor: 0.7 (Water-like)
         # Ceiling: 3.0 (Severe Polycythemia sludge - prevents SVR overflow)
-        viscosity = max(0.7, min(viscosity, 3.0))
+        viscosity = max(0.8, min(viscosity, 3.0))
         
         # 3. SVR - Dimensional Correctness
         # Using Age-Based Norms (dynes-sec-cm-5)
