@@ -106,7 +106,7 @@ class PediaFlowPhysicsEngine:
         
         is_sam = (input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION or input.muac_cm < 11.5)
         if is_sam:
-            contractility *= 0.8  # The "Flabby Heart" penalty
+            contractility *= 0.9  # The "Flabby Heart" penalty
         
         if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
             contractility *= 0.7  # Septic myocardial depression
@@ -806,7 +806,7 @@ class PediaFlowPhysicsEngine:
         normalized_svr_dynamic = svr_dynamic / 1000.0
         denom_dynamic = 1.0 + (normalized_svr_dynamic - 1.0) * params.afterload_sensitivity
         raw_factor_updated = 1.0 / max(0.1, denom_dynamic)
-        afterload_factor_updated = max(0.3, raw_factor_updated)
+        afterload_factor_updated = max(0.5, raw_factor_updated)
                                    
         # Recalculate CO and MAP
         co_l_min = (params.max_cardiac_output_l_min * params.cardiac_contractility * preload_efficiency * afterload_factor_updated)
