@@ -581,8 +581,13 @@ class PediaFlowPhysicsEngine:
         current_v_inter = params.v_inter_normal_l
         
         # SAM/Septic Baseline Edema (Third spacing logic)
-        if input.diagnosis in [ClinicalDiagnosis.SAM_DEHYDRATION, ClinicalDiagnosis.SEPTIC_SHOCK]:
-            baseline_edema_ml = input.weight_kg * 15  # 15ml/kg edema
+        if input.diagnosis == ClinicalDiagnosis.SAM_DEHYDRATION:
+            baseline_edema_ml = input.weight_kg * 15  # SAM = Edema
+        elif input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+            baseline_edema_ml = input.weight_kg * 5   # Sepsis = Mild 3rd spacing only
+        else:
+            baseline_edema_ml = 0
+        if baseline_edema_ml > 0:
             current_v_inter += baseline_edema_ml / 1000.0
 
         # 2. DETERMINE STARTING MAP (The Ground Truth)
@@ -648,6 +653,10 @@ class PediaFlowPhysicsEngine:
         if not input.lactate_mmol_l:
             if input.capillary_refill_sec > 4: start_lactate = 6.0
             elif input.capillary_refill_sec > 2: start_lactate = 3.5
+
+        print(f"DEBUG: p_interstitial={start_p_inter}")
+        print(f"DEBUG: baseline_edema_ml={baseline_edema_ml}")
+        print(f"DEBUG: interstitial_compliance={params.interstitial_compliance_ml_mmhg}")
 
         return SimulationState(
             time_minutes=0.0,
