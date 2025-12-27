@@ -674,7 +674,10 @@ class PediaFlowPhysicsEngine:
             current_lactate_mmol_l=start_lactate,
             
             cumulative_bolus_count=0,
-            time_since_last_bolus_min=999.0
+            time_since_last_bolus_min=999.0, 
+            is_sam=params.is_sam,
+            capillary_recruitment_base=params.capillary_recruitment_base,
+            final_starting_blood_volume_l=current_v_blood
         )
 
     @staticmethod
@@ -968,9 +971,7 @@ class PediaFlowPhysicsEngine:
         
         # 2. Influx Mass
         # Since FluidProperties doesn't have 'hemoglobin_content', we check the Enum type.
-        hb_conc_in_fluid = 0.0
-        if fluid_type == FluidType.PRBC:
-            hb_conc_in_fluid = 22.0 # PRBC is concentrated (~22 g/dL)
+        hb_conc_in_fluid = 22.0 if fluid_type == FluidType.PRBC else 0.0
         
         hb_influx_g = hb_conc_in_fluid * step_infusion_l * 10.0
         
@@ -1007,6 +1008,7 @@ class PediaFlowPhysicsEngine:
         # 4. New Concentration
         new_sodium = (current_na_mass + na_influx - na_efflux) / ecf_vol_l
         new_sodium = max(110.0, min(new_sodium, 180.0))
+        na_in_meq_min = (rate_min / 1000.0) * fluid_props.sodium_meq_l
 
         # --- C. POTASSIUM (Dengue Hypokalemia Logic) ---
         # 
@@ -1023,9 +1025,7 @@ class PediaFlowPhysicsEngine:
         # DENGUE/SEPSIS SHIFT
         # In high-stress leaky states, K shifts intracellularly or is wasted.
         k_shift_loss = 0.0
-        if params.reflection_coefficient_sigma < 0.6: 
-            # DENGUE: Assume 0.03 mmol/min disappearance from serum
-            k_shift_loss = 0.03 * dt_minutes
+        k_shift_loss = 0.03 * dt_minutes if params.reflection_coefficient_sigma < 0.6 else 0.0
             
         new_k = (current_k_mass + k_influx - k_efflux - k_shift_loss) / new_v_blood
         new_potassium = max(1.5, min(new_k, 9.0))
