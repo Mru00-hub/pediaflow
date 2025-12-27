@@ -56,8 +56,6 @@ class CalculationWarnings:
     missing_optimal_inputs: List[str] = field(default_factory=list)
     sam_shock_conflict: bool = False
 
-from datetime import datetime
-
 @dataclass
 class AuditLog:
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
