@@ -895,7 +895,7 @@ class PediaFlowPhysicsEngine:
             # If Fluid is 154 (NS), Diff is -14 (Hypertonic) -> Drive is negative -> Water out of cells
             # If Fluid is 0 (D5), Diff is 140 (Hypotonic) -> Drive is positive -> Water into cells
             
-            q_osmotic = (infusion_rate_ml_min / 1000.0) * tonic_diff * params.osmotic_conductance_k * params.intracellular_sodium_bias
+            q_osmotic = (infusion_rate_ml_min / 1000.0) * tonic_diff * (params.osmotic_conductance_k * 0.1) * params.intracellular_sodium_bias
             
             # Add Glucose Effect (Metabolizes to free water -> into cells)
             if current_fluid.glucose_g_l > 0:
@@ -1041,7 +1041,8 @@ class PediaFlowPhysicsEngine:
         # DENGUE/SEPSIS SHIFT
         # In high-stress leaky states, K shifts intracellularly or is wasted.
         k_shift_loss = 0.0
-        k_shift_loss = 0.03 * dt_minutes if params.reflection_coefficient_sigma < 0.6 else 0.0
+        if params.reflection_coefficient_sigma < 0.6:
+             k_shift_loss = 0.005 * dt_minutes 
             
         new_k = (current_k_mass + k_influx - k_efflux - k_shift_loss) / new_v_blood
         new_potassium = max(1.5, min(new_k, 9.0))
