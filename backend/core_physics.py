@@ -1013,16 +1013,28 @@ class PediaFlowPhysicsEngine:
         
         # 3. Efflux (Urine)
         # SAM retains Na (low urine conc), Sepsis/Dengue wastes Na (high urine conc).
-        urine_na_conc = 50.0 
-        if params.is_sam: 
-            urine_na_conc = 20.0 
+        if state.current_sodium > 145:
+            urine_na_conc = 100.0 # Dumping excess
+        elif state.current_sodium < 130:
+            urine_na_conc = 10.0 # Conservation
+        else:
+            urine_na_conc = 60.0 # Baseline
+
+        if params.is_sam:
+            # SAM kidneys cannot excrete sodium load effectively
+            # Even if serum Na is high, urine Na remains inappropriately low
+            urine_na_conc = min(urine_na_conc, 20.0) 
+            
         elif params.reflection_coefficient_sigma < 0.6: 
-            urine_na_conc = 80.0
+            # Sepsis/Dengue: Tubular dysfunction / wasting
+            # Kidneys leak sodium; urine Na is inappropriately high
+            urine_na_conc = max(urine_na_conc, 80.0)
             
         na_efflux = (fluxes['q_urine'] / 1000.0 * dt_minutes) * urine_na_conc
         
         # 4. New Concentration
         new_sodium = (current_na_mass + na_influx - na_efflux) / ecf_vol_l
+        print(f"DEBUG Na: Mass={current_na_mass:.1f} + In={na_influx:.2f} - Out={na_efflux:.2f} | Vol={ecf_vol_l:.3f}L -> Na={new_sodium:.1f}")
         new_sodium = max(110.0, min(new_sodium, 180.0))
         na_in_meq_min = (rate_min / 1000.0) * fluid_props.sodium_meq_l
 
