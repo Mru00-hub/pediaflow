@@ -525,8 +525,8 @@ class PediaFlowPhysicsEngine:
 
         print(f"DEBUG: has_wet_lungs={has_wet_lungs}")
         print(f"DEBUG: is_hypoxic={input.sp_o2_percent < 90}")
-        print(f"DEBUG: assumed_cvp={params.target_cvp_mmhg}")
-        print(f"DEBUG: Protocol volume={volume_ml}")
+        print(f"DEBUG: assumed_cvp={assumed_cvp}")
+        
         return PhysiologicalParams(
             tbw_fraction=vols["tbw_fraction"],
             v_blood_normal_l=vols["v_blood"],
