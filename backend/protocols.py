@@ -88,9 +88,23 @@ class PrescriptionEngine:
         else:
             # CRYSTALLOIDS (RL/NS) - The Core Shock Logic
             if input.diagnosis == ClinicalDiagnosis.SEVERE_DEHYDRATION:
-                 # Pure fluid loss (Diarrhea) = Aggressive refill allowed
-                 volume = int(input.weight_kg * 20) # Plan C
-                 duration = 60 if is_sam else 30
+                 # WHO PLAN C (Severe Dehydration)
+                 # Initial aggressive loading dose: 30 ml/kg
+                 # (Followed by 70ml/kg later, but this function generates the *first* bolus)
+                 volume = int(input.weight_kg * 30) 
+                 
+                 # Duration: 
+                 # Infants (<12mo): 1 hour
+                 # Older Children: 30 mins
+                 if input.age_months < 12:
+                     duration = 60
+                 else:
+                     duration = 30
+                 
+                 # SAM Safety Override for Plan C
+                 if is_sam:
+                     volume = int(input.weight_kg * 20) # Conservative
+                     duration = 60 # Slower
             
             elif is_septic:
                  # SEPTIC SHOCK: 20ml/kg first hour (WHO / Surviving Sepsis)
