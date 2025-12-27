@@ -137,10 +137,14 @@ class PrescriptionEngine:
         # --- SAFETY BRAKES (Overrides everything else) ---
         # If the lungs are ALREADY wet or failing, we must slow down, 
         # even if hypotensive (Start inotropes instead of flooding).
-        if has_congestion_signs:
+        if has_congestion_signs and not is_septic:
             duration = max(duration, 60)
             if input.sp_o2_percent < 85: # Severe Hypoxia
                  duration = max(duration, 90) # Trickle
+        if is_septic:
+            if input.sp_o2_percent < 85:  # ONLY severe hypoxia triggers brake
+                duration = max(duration, 90)
+                # Mild hypoxia (88%) = ACCEPTABLE in sepsis - give fluids
                 
         # Calculate Flow Rate
         rate_ml_hr = (volume / duration) * 60
