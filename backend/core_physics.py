@@ -478,11 +478,14 @@ class PediaFlowPhysicsEngine:
         dry_lung_diagnoses = [
             ClinicalDiagnosis.SEVERE_DEHYDRATION,
             ClinicalDiagnosis.SAM_DEHYDRATION,  # <--- ADD THIS
+            ClinicalDiagnosis.SEPTIC_SHOCK,  # ← ADD THIS
+            ClinicalDiagnosis.DENGUE_SHOCK,
         ]
         
         is_hypoxic = input.sp_o2_percent < 90
         is_extreme_tachypnea = input.respiratory_rate_bpm > (rr_limit * 1.4)
-        
+        if input.diagnosis == ClinicalDiagnosis.SEPTIC_SHOCK:
+            is_hypoxic = input.sp_o2_percent < 85 
         # Only treat as "Congestion" if not clearly DKA/Severe Dehydration (Acidotic breathing)
         # But if SpO2 is low (<90), it is ALWAYS Congestion/ARDS.
         has_wet_lungs = is_hypoxic or (is_extreme_tachypnea and input.diagnosis not in dry_lung_diagnoses)
