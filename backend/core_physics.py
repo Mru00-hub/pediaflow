@@ -1073,10 +1073,29 @@ class PediaFlowPhysicsEngine:
         
         # 3. Consumption (mg/kg/min)
         burn_rate = params.glucose_utilization_mg_kg_min
+        # Sepsis/Dengue increases BASAL demand (Fever/Stress), but causes Insulin Resistance
+        # [FIX] Moved BEFORE insulin logic so we don't boost the insulin effect
         if params.reflection_coefficient_sigma < 0.6: 
-            burn_rate *= 1.5 # Stress Hypermetabolism
+            burn_rate *= 1.5 
+
+        # Step B: Insulin Response (Storage in Muscle/Fat)
+        # [FIX] Increased factor from 0.05 to 0.1 to prevent massive spikes > 300
+        if state.current_glucose_mg_dl > 120:
+            excess_glucose = state.current_glucose_mg_dl - 120
+            insulin_effect = excess_glucose * 0.1 
+            
+            # Sepsis causes Insulin Resistance (Cells refuse to take up sugar)
+            # We dampen the insulin effect slightly if septic
+            if params.reflection_coefficient_sigma < 0.6:
+                insulin_effect *= 0.7
+                
+            burn_rate += insulin_effect
+            
+        # Step C: SAM Modifier (Global Tissue Atrophy)
+        # [ANSWER] Yes, this must apply to EVERYTHING (Basal + Insulin)
+        # because SAM kids lack the muscle mass to burn/store sugar.
         if params.is_sam:
-            burn_rate *= 0.7 # Low muscle mass
+            burn_rate *= 0.7 
             
         gluc_consumption_mg = (params.weight_kg * burn_rate) * dt_minutes
         
