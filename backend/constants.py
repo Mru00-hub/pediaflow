@@ -28,7 +28,7 @@ class FluidProperties:
 
 class AGE_CONSTANTS:
     # Age (months): (Min RR, Max RR)
-    RR_LIMITS = {0: (30,100), 12: (20,80), 60: (15,60), 216: (10,50)}
+    RR_LIMITS = {0: (30,60), 12: (20,40), 60: (15,30), 216: (10,24)}
 
 class PHYSICS_CONSTANTS:
     MINUTES_PER_DAY = 1440.0
@@ -70,7 +70,7 @@ class FLUID_LIBRARY:
         FluidType.D5_NS: FluidProperties(
             name="D5 Normal Saline", 
             sodium_meq_l=154, glucose_g_l=50, oncotic_pressure_mmhg=0, 
-            vol_distribution_intravascular=0.20, # Glucose metabolizes -> free water -> cells
+            vol_distribution_intravascular=0.25, # Glucose metabolizes -> free water -> cells
             potassium_meq_l=0.0,
             osmolarity=560.0
         ),
@@ -101,7 +101,7 @@ class FLUID_LIBRARY:
             sodium_meq_l=77.0,       # Half of 154
             glucose_g_l=0.0,
             oncotic_pressure_mmhg=0.0,        
-            vol_distribution_intravascular=0.15, # Leaves vessels quickly
+            vol_distribution_intravascular=0.10, # Leaves vessels quickly
             potassium_meq_l=0.0,
             is_colloid=False, 
             osmolarity=154.0 # Hypotonic (Dangerous for brain)
@@ -111,9 +111,9 @@ class FLUID_LIBRARY:
             sodium_meq_l=77.0,
             glucose_g_l=50.0,
             oncotic_pressure_mmhg=0.0,
-            vol_distribution_intravascular=0.15,
+            vol_distribution_intravascular=0.10,
             potassium_meq_l=0.0,
-            osmolarity=432.0
+            osmolarity=406.0
         )
     }
 
