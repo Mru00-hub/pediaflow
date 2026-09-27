@@ -27,13 +27,13 @@ class FluidProperties:
     osmolarity: float = 280.0  # Default to isotonic if not specified
 
 class AGE_CONSTANTS:
-    # Age (months): (Min RR, Max RR)
+    # Age (months): (Min RR, Max RR) - AHA PALS and WHO
     RR_LIMITS = {0: (30,60), 12: (20,40), 60: (15,30), 216: (10,24)}
 
 class PHYSICS_CONSTANTS:
     MINUTES_PER_DAY = 1440.0
     NEONATE_RENAL_MATURITY_BASE = 0.3
-    RENAL_MATURATION_RATE_PER_MONTH = 0.029 # (1.0 - 0.3) / 24 months
+    RENAL_MATURATION_RATE_PER_MONTH = (1.0 - NEONATE_RENAL_MATURITY_BASE) / 24
     
     # Compartment Ratios
     NEONATE_TBW = 0.80
